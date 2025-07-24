@@ -58,9 +58,12 @@ jobs:
           echo "TERM=xterm" >> $GITHUB_ENV
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          echo "RUSTUP_TOOLCHAIN=nightly-2024-05-06" >> $GITHUB_ENV
-          echo "RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup" >> $GITHUB_ENV
-          echo "RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup" >> $GITHUB_ENV
+      - name: Install Rust Toolchain
+        run: |
+          rustup self uninstall -y || true
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2024-05-05
+          source $HOME/.cargo/env
+          rustc --version
       - name: Unit Test
         run: make test
 

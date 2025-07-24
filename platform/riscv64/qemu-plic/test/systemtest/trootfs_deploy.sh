@@ -30,6 +30,9 @@ prepare_sources() {
     echo "=== Cloning required repositories ==="
     git clone https://github.com/CHonghaohao/linux_v6.10-rc1.git || return 1
     git clone https://github.com/syswonder/hvisor-tool.git || return 1
+    cd hvisor-tool || return 1  # 进入 hvisor-tool 目录
+    git submodule update --init --recursive  # 同步子模块（包含 cJSON）
+    cd ..  # 返回上级目录
 }
 
 build_hvisor_tool() {
