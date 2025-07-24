@@ -16,6 +16,8 @@ env:
   MODE: debug
   # 替换为你的镜像地址（如GHCR/Docker Hub）
   CI_IMAGE: ghcr.io/{username}/hvisor-ci:latest
+  # 全局设置TERM变量解决tput问题
+  TERM: xterm
 
 jobs:
   linter:
@@ -25,10 +27,30 @@ jobs:
       image: ghcr.io/jaxtonmax/hvisor-ci:latest
       credentials:
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}  # 用于拉取GHCR私有镜像
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      - name: Configure cargo registry
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << EOF
+          [source.crates-io]
+          replace-with = "rustcc"
+          
+          [source.rustcc]
+          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
+          
+          [net]
+          git-fetch-with-cli = true
+          EOF
+      - name: Format Check
+        run: make fmt-test
+      - name: Configure cargo registry
+        run: |
+          mkdir -p ~/.cargo
+          echo '[source.crates-io]' > ~/.cargo/config.toml
+          echo 'registry = "https://github.com/rust-lang/crates.io-index"' >> ~/.cargo/config.toml
       - name: Format Check
         run: make fmt-test
 
@@ -59,13 +81,33 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Install dependencies (wget, curl)
+      - name: Configure cargo registry
         run: |
-          apt-get update && apt-get install -y wget curl
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << EOF
+          [source.crates-io]
+          replace-with = "rustcc"
+          
+          [source.rustcc]
+          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
+          
+          [net]
+          git-fetch-with-cli = true
+          EOF
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
+      - name: Configure cargo registry
+        run: |
+          mkdir -p ~/.cargo
+          echo '[source.crates-io]' > ~/.cargo/config.toml
+          echo 'replace-with = "rustcc"' >> ~/.cargo/config.toml
+          echo '[source.rustcc]' >> ~/.cargo/config.toml
+          echo 'registry = "https://code.aliyun.com/rustcc/crates.io-index.git"' >> ~/.cargo/config.toml
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y wget curl
       - name: Unit Test
         run: make test
 
@@ -117,10 +159,31 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      - name: Configure cargo registry
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << EOF
+          [source.crates-io]
+          replace-with = "rustcc"
+          
+          [source.rustcc]
+          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
+          
+          [net]
+          git-fetch-with-cli = true
+          EOF
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
+      - name: Configure cargo registry
+        run: |
+          mkdir -p ~/.cargo
+          echo '[source.crates-io]' > ~/.cargo/config.toml
+          echo 'replace-with = "rustcc"' >> ~/.cargo/config.toml
+          echo '[source.rustcc]' >> ~/.cargo/config.toml
+          echo 'registry = "https://code.aliyun.com/rustcc/crates.io-index.git"' >> ~/.cargo/config.toml
       - name: Build
         run: make
 
@@ -145,13 +208,38 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Install dependencies (wget, curl, unzip)
+      - name: Configure cargo registry
         run: |
-          apt-get update && apt-get install -y wget curl unzip
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << EOF
+          [source.crates-io]
+          replace-with = "rustcc"
+          
+          [source.rustcc]
+          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
+          
+          [net]
+          git-fetch-with-cli = true
+          EOF
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y \
+          wget curl unzip u-boot-tools \
+          sudo
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
+      - name: Configure cargo registry
+        run: |
+          mkdir -p ~/.cargo
+          echo '[source.crates-io]' > ~/.cargo/config.toml
+          echo 'replace-with = "rustcc"' >> ~/.cargo/config.toml
+          echo '[source.rustcc]' >> ~/.cargo/config.toml
+          echo 'registry = "https://code.aliyun.com/rustcc/crates.io-index.git"' >> ~/.cargo/config.toml
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y wget curl unzip u-boot-tools
       - name: Run System Test
         run: make stest
 
