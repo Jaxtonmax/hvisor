@@ -55,9 +55,10 @@ jobs:
         uses: actions/checkout@v4
       - name: Set up environment variables
         run: |
+          echo "TERM=xterm" >> $GITHUB_ENV
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          # 切换到清华大学 Rust 镜像（稳定且速度快）
+          echo "RUSTUP_TOOLCHAIN=nightly-2024-05-06" >> $GITHUB_ENV
           echo "RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup" >> $GITHUB_ENV
           echo "RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup" >> $GITHUB_ENV
       - name: Unit Test
@@ -142,6 +143,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git build-essential 
+      - name: Setup RISCV64 Toolchain
+        if: matrix.arch == 'riscv64'  
+        uses: ./.github/actions/setup-riscv64-unknown-linux-gnu
       - name: Run System Test
         run: make stest
 
