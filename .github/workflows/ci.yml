@@ -203,9 +203,13 @@ jobs:
           EOF
       - name: Install dependencies
         run: |
-          apt-get update && apt-get install -y \
-          wget curl unzip u-boot-tools \
-          sudo
+          apt-get update -y
+          apt-get install -y software-properties-common
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update -y
+          apt-get install -y \
+            wget curl unzip u-boot-tools \
+            sudo \
             gcc-10 g++-10 \
             libc6-dev  
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 \
