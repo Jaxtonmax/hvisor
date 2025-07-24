@@ -15,7 +15,7 @@ on:
 env:
   MODE: debug
   # 替换为你的镜像地址（如GHCR/Docker Hub）
-  CI_IMAGE: ghcr.io/{username}/hvisor-ci:latest
+  CI_IMAGE: ghcr.io/{username}/hvisor-ci:22.04
   # 全局设置TERM变量解决tput问题
   TERM: xterm
 
@@ -24,7 +24,7 @@ jobs:
     name: linter
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/jaxtonmax/hvisor-ci:latest
+      image: ghcr.io/jaxtonmax/hvisor-ci:22.04
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -51,7 +51,7 @@ jobs:
     name: unittest
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/jaxtonmax/hvisor-ci:latest
+      image: ghcr.io/jaxtonmax/hvisor-ci:22.04
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -101,7 +101,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/jaxtonmax/hvisor-ci:latest
+      image: ghcr.io/jaxtonmax/hvisor-ci:22.04
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -170,7 +170,7 @@ jobs:
     name: systemtest
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/jaxtonmax/hvisor-ci:latest
+      image: ghcr.io/jaxtonmax/hvisor-ci:22.04
       options: --privileged 
       credentials:
         username: ${{ github.actor }}
@@ -232,7 +232,7 @@ jobs:
     name: license-checker
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/jaxtonmax/hvisor-ci:latest
+      image: ghcr.io/jaxtonmax/hvisor-ci:22.04
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
