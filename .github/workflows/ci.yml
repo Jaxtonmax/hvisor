@@ -133,7 +133,7 @@ jobs:
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Install dependencies
         run: |
-          apt-get update && apt-get install -y unzip
+          apt-get update && apt-get install -y unzip sudo
       - name: Run System Test
         run: make stest
 

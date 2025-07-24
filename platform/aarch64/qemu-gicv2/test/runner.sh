@@ -74,8 +74,8 @@ if [ "$ARCH" == "aarch64" ]; then
         -semihosting \
         -bios $UBOOT \
         -drive if=pflash,format=raw,index=1,file=flash.img \
-        -device loader,file=$HVISOR_BIN,addr=0x40400000,force-raw=on \
-        -global arm-smmuv3.stage=2
+        -device loader,file=$HVISOR_BIN,addr=0x40400000,force-raw=on 
+
 
     exit 0
 elif [ "$ARCH" == "riscv64" ]; then
