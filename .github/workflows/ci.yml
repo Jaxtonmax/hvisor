@@ -131,6 +131,9 @@ jobs:
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y unzip
       - name: Run System Test
         run: make stest
 
