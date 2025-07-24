@@ -59,6 +59,9 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      - name: Install dependencies (wget, curl)
+        run: |
+          apt-get update && apt-get install -y wget curl
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -142,6 +145,9 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      - name: Install dependencies (wget, curl, unzip)
+        run: |
+          apt-get update && apt-get install -y wget curl unzip
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
