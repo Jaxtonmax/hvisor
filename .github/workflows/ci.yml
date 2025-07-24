@@ -146,9 +146,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git build-essential 
-      - name: Install RISCV64 Toolchain (if riscv64)
-        if: ${{ matrix.arch == 'riscv64' }}  
+      - name: Setup RISC-V Toolchain
+        if: matrix.arch == 'riscv64'
         uses: ./.github/actions/setup-riscv64-unknown-linux-gnu
+        with:
+          version: '13.2.0'  # 与 Action 默认版本一致
+          install-path: '/opt/riscv64-unknown-linux-gnu'
       - name: Run System Test
         run: make stest
 
