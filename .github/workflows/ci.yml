@@ -14,47 +14,26 @@ on:
   workflow_dispatch:
 env:
   MODE: debug
-  # 替换为你的镜像地址（如GHCR/Docker Hub）
-  CI_IMAGE: ghcr.io/{username}/hvisor-ci:22.04
-  # 全局设置TERM变量解决tput问题
-  TERM: xterm
+  # 替换为您的Docker镜像地址（需提前推送至容器仓库）
+  DOCKER_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:22.04 # 例如：ghcr.io/your-username/hvisor-ci:latest
 
 jobs:
   linter:
     name: linter
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     container:
       image: ghcr.io/jaxtonmax/hvisor-ci:22.04
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure cargo registry
-        run: |
-          mkdir -p ~/.cargo
-          cat > ~/.cargo/config.toml << EOF
-          [source.crates-io]
-          replace-with = "rustcc"
-          
-          [source.rustcc]
-          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
-          
-          [net]
-          git-fetch-with-cli = true
-          EOF
       - name: Format Check
         run: make fmt-test
 
   unittest:
     name: unittest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     container:
       image: ghcr.io/jaxtonmax/hvisor-ci:22.04
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -74,42 +53,22 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure cargo registry
-        run: |
-          mkdir -p ~/.cargo
-          cat > ~/.cargo/config.toml << EOF
-          [source.crates-io]
-          replace-with = "rustcc"
-          
-          [source.rustcc]
-          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
-          
-          [net]
-          git-fetch-with-cli = true
-          EOF
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
-      - name: Install dependencies
-        run: apt-get update && apt-get install -y wget curl
       - name: Unit Test
         run: make test
 
   build:
     name: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     container:
       image: ghcr.io/jaxtonmax/hvisor-ci:22.04
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # aarch64
           - arch: aarch64
             board: "qemu-gicv3"
             rustc_target: aarch64-unknown-none
@@ -131,50 +90,30 @@ jobs:
           - arch: aarch64
             board: "ok6254-c"
             rustc_target: aarch64-unknown-none
-          # riscv64
           - arch: riscv64
             board: "qemu-aia"
             rustc_target: riscv64gc-unknown-none-elf
           - arch: riscv64
             board: "qemu-plic"
             rustc_target: riscv64gc-unknown-none-elf
-          # loongarch64
           - arch: loongarch64
             board: "ls3a5000"
             rustc_target: loongarch64-unknown-none
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure cargo registry
-        run: |
-          mkdir -p ~/.cargo
-          cat > ~/.cargo/config.toml << EOF
-          [source.crates-io]
-          replace-with = "rustcc"
-          
-          [source.rustcc]
-          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
-          
-          [net]
-          git-fetch-with-cli = true
-          EOF
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
       - name: Build
         run: make
 
   systemtest:
     name: systemtest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     container:
       image: ghcr.io/jaxtonmax/hvisor-ci:22.04
-      options: --privileged 
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -188,54 +127,18 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure cargo registry
-        run: |
-          mkdir -p ~/.cargo
-          cat > ~/.cargo/config.toml << EOF
-          [source.crates-io]
-          replace-with = "rustcc"
-          
-          [source.rustcc]
-          registry = "https://code.aliyun.com/rustcc/crates.io-index.git"
-          
-          [net]
-          git-fetch-with-cli = true
-          EOF
-      - name: Install dependencies
-        run: |
-          apt-get update -y
-          apt-get install -y software-properties-common
-          add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          apt-get update -y
-          apt-get install -y \
-            wget curl unzip u-boot-tools \
-            sudo \
-            gcc-10 g++-10 \
-            libc6-dev  
-          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 \
-            --slave /usr/bin/g++ g++ /usr/bin/g++-10
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
-      - name: Install dependencies
-        run: apt-get update && apt-get install -y wget curl unzip u-boot-tools
-      - name: Verify RISC-V toolchain
-        run: |
-          riscv64-unknown-linux-gnu-gcc --version
-          echo "Toolchain path: $(which riscv64-unknown-linux-gnu-gcc)"
       - name: Run System Test
         run: make stest
 
   license-checker:
     name: license-checker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     container:
       image: ghcr.io/jaxtonmax/hvisor-ci:22.04
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
