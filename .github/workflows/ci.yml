@@ -221,6 +221,10 @@ jobs:
           echo "RUSTC_TARGET=${{ matrix.rustc_target }}" >> $GITHUB_ENV
       - name: Install dependencies
         run: apt-get update && apt-get install -y wget curl unzip u-boot-tools
+      - name: Verify RISC-V toolchain
+        run: |
+          riscv64-unknown-linux-gnu-gcc --version
+          echo "Toolchain path: $(which riscv64-unknown-linux-gnu-gcc)"
       - name: Run System Test
         run: make stest
 
