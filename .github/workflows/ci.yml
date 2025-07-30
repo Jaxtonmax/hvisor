@@ -1,105 +1,141 @@
+# hvisor Github Actions CI
+# wheatfox <wheatfox17@icloud.com>
+
 name: CI
 on:
   push:
-    branches: [ main, dev ]
+    branches:
+      - main
+      - dev
   pull_request:
-    branches: [ main, dev ]
+    branches:
+      - main
+      - dev
   workflow_dispatch:
-
-
+env:
+  MODE: debug
 jobs:
-  linter-and-license:
-    name: Linter & License Check
-    runs-on: ubuntu-22.04
-    container: ghcr.io/jaxtonmax/hvisor-ci:22.04_pro
+  linter:
+    name: linter
+    runs-on: ubuntu-latest
     steps:
-      - name: Reset Rustup to Official Servers
-        run: |
-          echo "RUSTUP_DIST_SERVER=https://static.rust-lang.org" >> $GITHUB_ENV
-          echo "RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup" >> $GITHUB_ENV
       - name: Checkout Repository
         uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-none
+          components: rust-src rustfmt
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-aarch64 qemu-system-riscv64 gdb-multiarch llvm-dev libclang-dev wget
+          cargo install --version 0.3.0 --locked cargo-binutils
+          cargo install cargo-xbuild
       - name: Format Check
         run: make fmt-test
-      - name: License Check
-        run: ./tools/license_checker.sh
 
+  # this job uses `cargo test` semantics to run unit test exclusively in QEMU
   unittest:
-    name: Unittest
-    runs-on: ubuntu-22.04
-    container: ghcr.io/jaxtonmax/hvisor-ci:22.04_pro
+    name: unittest
+    runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: false # continue to run all jobs even if some fail
       matrix:
         include:
-          - { arch: aarch64, board: "qemu-gicv3" }
-          - { arch: aarch64, board: "qemu-gicv2" }
-          - { arch: riscv64, board: "qemu-plic" }
-          - { arch: riscv64, board: "qemu-aia" }
+          # aarch64
+          - arch: aarch64
+            board: "qemu-gicv3"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "qemu-gicv2"
+            rustc_target: aarch64-unknown-none
+          - arch: riscv64
+            board: "qemu-plic"
+            rustc_target: riscv64gc-unknown-none-elf
+          - arch: riscv64
+            board: "qemu-aia"
+            rustc_target: riscv64gc-unknown-none-elf
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Reset Rustup to Official Servers
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustc_target }}
+          components: rust-src
+      - name: Install Dependencies
         run: |
-          echo "RUSTUP_DIST_SERVER=https://static.rust-lang.org" >> $GITHUB_ENV
-          echo "RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-aarch64 qemu-system-riscv64 gdb-multiarch llvm-dev libclang-dev wget
+          cargo install --version 0.3.0 --locked cargo-binutils
+          cargo install cargo-xbuild
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-      - name: Run Unit Test
-        # 所有依赖已在镜像中，直接运行测试
+      - name: Unit Test
         run: make test
 
+  # this job is for compilation test, it will make sure all aarch64, riscv64, loongarch64 can be compiled successfully
+  # there is no actual running in this job
   build:
-    name: Build All Targets
-    runs-on: ubuntu-22.04
-    container: ghcr.io/jaxtonmax/hvisor-ci:22.04_pro
+    name: build
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: aarch64, board: "qemu-gicv3" }
-          - { arch: aarch64, board: "qemu-gicv2" }
-          - { arch: aarch64, board: "zcu102" }
-          - { arch: aarch64, board: "imx8mp" }
-          - { arch: aarch64, board: "rk3568" }
-          - { arch: aarch64, board: "rk3588" }
-          - { arch: aarch64, board: "ok6254-c" }
-          - { arch: riscv64, board: "qemu-aia" }
-          - { arch: riscv64, board: "qemu-plic" }
-          # LoongArch 构建任务也在这里
-          - { arch: loongarch64, board: "ls3a5000" }
+          # aarch64
+          - arch: aarch64
+            board: "qemu-gicv3"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "qemu-gicv2"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "zcu102"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "imx8mp"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "rk3568"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "rk3588"
+            rustc_target: aarch64-unknown-none
+          - arch: aarch64
+            board: "ok6254-c"
+            rustc_target: aarch64-unknown-none
+          # riscv64
+          - arch: riscv64
+            board: "qemu-aia"
+            rustc_target: riscv64gc-unknown-none-elf
+          - arch: riscv64
+            board: "qemu-plic"
+            rustc_target: riscv64gc-unknown-none-elf
+          # loongarch64
+          - arch: loongarch64
+            board: "ls3a5000"
+            rustc_target: loongarch64-unknown-none
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Reset Rustup to Official Servers
-        run: |
-          echo "RUSTUP_DIST_SERVER=https://static.rust-lang.org" >> $GITHUB_ENV
-          echo "RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup" >> $GITHUB_ENV
-
-      # --- 关键优化：为 LoongArch 动态加载工具链 ---
-      - name: Cache and Install LoongArch Toolchain
-        if: matrix.arch == 'loongarch64'
-        uses: actions/cache@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          # 需要缓存的目录
-          path: /opt/loongarch-toolchain
-          # 缓存的唯一标识，如果工具链更新，可以修改这个 key 来刷新缓存
-          key: ${{ runner.os }}-loongarch-toolchain-v8.0
-      
-      - name: Download LoongArch Toolchain if not cached
-        if: matrix.arch == 'loongarch64' && steps.cache-loongarch.outputs.cache-hit != 'true'
+          targets: ${{ matrix.rustc_target }}
+          components: rust-src
+      - name: Install Dependencies
         run: |
-          mkdir -p /opt/loongarch-toolchain
-          wget -qO- https://github.com/sunhaiyong1978/CLFS-for-LoongArch/releases/download/8.0/loongarch64-clfs-8.0-cross-tools-gcc-full.tar.xz | tar -xJ -C /opt/loongarch-toolchain
-
-      - name: Add LoongArch Toolchain to PATH
-        if: matrix.arch == 'loongarch64'
-        run: echo "/opt/loongarch-toolchain/cross-tools/bin" >> $GITHUB_PATH
-      
-      # --- 核心构建步骤 ---
+          sudo apt-get update
+          sudo apt-get install -y wget
+          cargo install --version 0.3.0 --locked cargo-binutils
+          cargo install cargo-xbuild
+          wget -q https://github.com/sunhaiyong1978/CLFS-for-LoongArch/releases/download/8.0/loongarch64-clfs-8.0-cross-tools-gcc-full.tar.xz
+          tar -xf loongarch64-clfs-8.0-cross-tools-gcc-full.tar.xz
+          echo "$GITHUB_WORKSPACE/cross-tools/bin" >> $GITHUB_PATH
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -107,69 +143,75 @@ jobs:
       - name: Build
         run: make
 
+  # this job is for booting root and nonroot inside qemu for system test
   systemtest:
-    name: Systemtest
+    # if: false # we need to update corresponding scripts for the new board abstraction
+    name: systemtest
     runs-on: ubuntu-22.04
-    container:
-      image: ghcr.io/jaxtonmax/hvisor-ci:22.04_pro
-      options: --cap-add=SYS_ADMIN --privileged
     strategy:
       fail-fast: false
       matrix:
         include:
+          # aarch64
           - arch: aarch64
             rustc_target: aarch64-unknown-none
             board: "qemu-gicv3"
+          # riscv64
           - arch: riscv64
             rustc_target: riscv64gc-unknown-none-elf
             board: "qemu-plic"
+          # Because other features need to be customized scripts
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          submodules: 'true'
+          targets: ${{ matrix.rustc_target }}
+          components: rust-src
 
-      - name: Reset Rustup to Official Servers
+      - name: Setup QEMU from Source
+        uses: ./.github/actions/setup-qemu
+        with:
+          qemu-version: '9.0.2'
+          install-path: '/opt/qemu'
+
+      - name: Setup ARM aarch64-none-linux-gnu
+        if: matrix.arch == 'aarch64'
+        uses: ./.github/actions/setup-aarch64-none-linux-gnu
+        with:
+          version: '10.3-2021.07' 
+          install-path: '/opt/aarch64-none-linux-gnu'
+
+      - name: Setup RISCV riscv64-unknown-linux-gnu
+        if: matrix.arch == 'riscv64'
+        uses: ./.github/actions/setup-riscv64-unknown-linux-gnu
+        with:
+          version: '13.2.0' 
+          install-path: '/opt/riscv64-unknown-linux-gnu'
+
+
+      - name: Install Dependencies
         run: |
-          echo "RUSTUP_DIST_SERVER=https://static.rust-lang.org" >> $GITHUB_ENV
-          echo "RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-aarch64 qemu-system-riscv64 gdb-multiarch llvm-dev libclang-dev wget expect device-tree-compiler p7zip-full gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu
+          cargo install --version 0.3.0 --locked cargo-binutils
+          cargo install cargo-xbuild
 
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-
-      # - name: Build hvisor-tool in a Controlled Environment
-      #   run: |
-      #     # 1. 确定工作目录和源码
-      #     VIRDISK_DIR="${{ github.workspace }}/platform/${{ matrix.arch }}/${{ matrix.board }}/image/virtdisk"
-      #     HVISOR_TOOL_REPO="https://github.com/syswonder/hvisor-tool.git"
-          
-      #     # 2. 进入工作目录并克隆源码
-      #     cd "${VIRDISK_DIR}"
-      #     git clone "${HVISOR_TOOL_REPO}"
-      #     cd hvisor-tool
-
-      #     # 3. 准备构建环境 (这是我们之前找到的正确配置)
-      #     local MAKE_ARCH=""
-      #     if [ "${{ matrix.arch }}" == "riscv64" ]; then
-      #       export CC='riscv64-linux-gnu-gcc --sysroot=/usr/riscv64-linux-gnu -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0'
-      #       MAKE_ARCH="riscv"
-      #     elif [ "${{ matrix.arch }}" == "aarch64" ]; then
-      #       export CC='aarch64-linux-gnu-gcc --sysroot=/usr/aarch64-linux-gnu -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0'
-      #       MAKE_ARCH="arm64"
-      #     fi
-
-      #     # 4. 执行构建 (使用我们完全控制的 CC 和 CFLAGS)
-      #     echo "--- Starting controlled build of hvisor-tool ---"
-      #     git submodule update --init --recursive
-      #     make -e all \
-      #       ARCH=${MAKE_ARCH} \
-      #       LOG=LOG_INFO \
-      #       KDIR="${VIRDISK_DIR}/linux_v6.10-rc1" \
-      #       CFLAGS="" \
-      #       MAKE='make -e'
-      #     echo "--- Controlled build finished ---"
-        
       - name: Run System Test
         run: make stest
+
+  license-checker:
+    name: license-checker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: License Check
+        run: |
+          set -x  
+          ./tools/license_checker.sh
