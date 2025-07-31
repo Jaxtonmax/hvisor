@@ -160,14 +160,61 @@ jobs:
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-      - name: Check if aarch64 include directory exists
-        run: |
-          echo "检查路径: /usr/aarch64-linux-gnu/include/"
-          ls -ld /usr/aarch64-linux-gnu/include/
+
       - name: Check aarch64-none-linux-gnu-gcc version
         run: 
           aarch64-none-linux-gnu-gcc --version
           aarch64-linux-gnu-gcc --version
+      # === 新增步骤: 检查交叉编译器的 Sysroot 目录是否存在 ===
+      # 这个步骤用于验证我们的诊断，它会列出目标架构的头文件和库目录。
+      - name: Verify Sysroot Directories Exist
+        run: |
+          echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
+          if [ "${{ matrix.arch }}" == "aarch64" ]; then
+            SYSROOT_PATH="/usr/aarch64-linux-gnu"
+          elif [ "${{ matrix.arch }}" == "riscv64" ]; then
+            SYSROOT_PATH="/usr/riscv64-linux-gnu"
+          fi
+
+          echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
+          ls -la "${SYSROOT_PATH}"
+
+          echo "--- Checking include directory: ${SYSROOT_PATH}/include ---"
+          ls -la "${SYSROOT_PATH}/include"
+
+          echo "--- Checking library directory: ${SYSROOT_PATH}/lib ---"
+          ls -la "${SYSROOT_PATH}/lib"
+
+
+      # === 修复步骤: 动态修复构建脚本，为交叉编译器注入正确的 Sysroot ===
+      - name: Patch Cross-Compile Command with Correct Sysroot
+        run: |
+          # 根据矩阵中的架构，确定正确的 Sysroot 路径和 Make 命令
+          if [ "${{ matrix.arch }}" == "aarch64" ]; then
+            SYSROOT_PATH="/usr/aarch64-linux-gnu"
+            MAKE_SEARCH="make all ARCH=arm64"
+            MAKE_REPLACE="make all ARCH=arm64 CFLAGS='--sysroot=${SYSROOT_PATH}'"
+          elif [ "${{ matrix.arch }}" == "riscv64" ]; then
+            SYSROOT_PATH="/usr/riscv64-linux-gnu"
+            MAKE_SEARCH="make all ARCH=riscv64"
+            MAKE_REPLACE="make all ARCH=riscv64 CFLAGS='--sysroot=${SYSROOT_PATH}'"
+          else
+            echo "Unsupported architecture for patching: ${{ matrix.arch }}"
+            exit 1
+          fi
+
+          # 找到需要修复的脚本
+          SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
+
+          if [ -f "$SCRIPT_PATH" ]; then
+            echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
+            sed -i "s|${MAKE_SEARCH}|${MAKE_REPLACE}|g" "$SCRIPT_PATH"
+            echo "Patch applied successfully. Patched content:"
+            grep --color=always "${MAKE_REPLACE}" "$SCRIPT_PATH"
+          else
+            echo "Warning: Build script $SCRIPT_PATH not found. Skipping patch."
+          fi
+
       - name: Run System Test
         run: make stest
 
