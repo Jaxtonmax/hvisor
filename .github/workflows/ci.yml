@@ -162,7 +162,7 @@ jobs:
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
 
       - name: Check aarch64-none-linux-gnu-gcc version
-        run: 
+        run: |
           aarch64-none-linux-gnu-gcc --version
           aarch64-linux-gnu-gcc --version
       # === 新增步骤: 检查交叉编译器的 Sysroot 目录是否存在 ===
