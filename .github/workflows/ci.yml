@@ -166,9 +166,11 @@ jobs:
           echo "### Installing full cross-compile toolchain for ${{ matrix.arch }} ###"
           sudo apt-get update
           if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
+            sudo apt-get install -y gcc-aarch64-linux-gnu;
+            sudo apt-get install -y libc6-dev-arm64-cross
           elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-            sudo apt-get install -y gcc-riscv64-linux-gnu
+            sudo apt-get install -y gcc-riscv64-linux-gnu;
+            sudo apt-get install -y libc6-dev-riscv64-cross
           fi
 
       # === 验证步骤：现在应该能看到 include 目录了 ===
