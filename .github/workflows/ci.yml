@@ -181,16 +181,16 @@ jobs:
       # === 新增步骤: 检查交叉编译器的 Sysroot 目录是否存在 ===
       # 这个步骤用于验证我们的诊断，它会列出目标架构的头文件和库目录。
       # === 步骤 2: 验证 Sysroot 目录是否存在 (可选但推荐) ===
-      # - name: Verify Sysroot Directories Exist
-      #   run: |
-      #     echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
-      #     if [ "${{ matrix.arch }}" == "aarch64" ]; then
-      #       SYSROOT_PATH="/usr/aarch64-linux-gnu"
-      #     elif [ "${{ matrix.arch }}" == "riscv64" ]; then
-      #       SYSROOT_PATH="/usr/riscv64-linux-gnu"
-      #     fi
-      #     echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
-      #     ls -la "${SYSROOT_PATH}"
+      - name: Verify Sysroot Directories Exist
+        run: |
+          echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
+          if [ "${{ matrix.arch }}" == "aarch64" ]; then
+            SYSROOT_PATH="/usr/aarch64-linux-gnu"
+          elif [ "${{ matrix.arch }}" == "riscv64" ]; then
+            SYSROOT_PATH="/usr/riscv64-linux-gnu"
+          fi
+          echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
+          ls -la "${SYSROOT_PATH}"
 
 
      # === 步骤 3: 强制编译器使用新安装的库 ===
