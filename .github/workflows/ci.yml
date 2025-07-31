@@ -1,7 +1,11 @@
 # hvisor Github Actions CI
 # wheatfox <wheatfox17@icloud.com>
+#
+# 此工作流已更新为使用预构建的 Docker 容器，该容器包含了所有必需的依赖项和工具链。
+# 这通过消除重复的设置步骤，显著加快了 CI 流程。
 
 name: CI
+
 on:
   push:
     branches:
@@ -12,64 +16,60 @@ on:
       - main
       - dev
   workflow_dispatch:
+
 env:
   MODE: debug
+  #
+  # ============================== 重要 ==============================
+  # 请将下面的路径替换为您在容器仓库中的 CI 镜像路径。
+  #
+  # - 对于 GitHub Container Registry (GHCR)，格式为: ghcr.io/您的GitHub用户名/您的仓库名:标签
+  #   示例: ghcr.io/wheatfox/hvisor:ci-latest
+  #
+  # - 对于 Docker Hub，格式为: 您的DockerHub用户名/您的镜像名:标签
+  #   示例: wheatfox/hvisor-ci:latest
+  #
+  CI_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:wzm # <-- 请务必替换此行为您自己的镜像路径!
+
 jobs:
   linter:
     name: linter
     runs-on: ubuntu-latest
+    # 在预构建的 Docker 容器中运行所有步骤
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
     steps:
+      # 代码被检出到容器的工作区中
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-none
-          components: rust-src rustfmt
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-aarch64 qemu-system-riscv64 gdb-multiarch llvm-dev libclang-dev wget
-          cargo install --version 0.3.0 --locked cargo-binutils
-          cargo install cargo-xbuild
+
+      # 所有依赖项（Rust, QEMU 等）都已在容器中，不再需要安装步骤。
+
       - name: Format Check
         run: make fmt-test
 
-  # this job uses `cargo test` semantics to run unit test exclusively in QEMU
   unittest:
     name: unittest
     runs-on: ubuntu-latest
+    # 在预构建的 Docker 容器中运行所有步骤
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
     strategy:
-      fail-fast: false # continue to run all jobs even if some fail
+      fail-fast: false
       matrix:
         include:
-          # aarch64
           - arch: aarch64
             board: "qemu-gicv3"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "qemu-gicv2"
-            rustc_target: aarch64-unknown-none
           - arch: riscv64
             board: "qemu-plic"
-            rustc_target: riscv64gc-unknown-none-elf
           - arch: riscv64
             board: "qemu-aia"
-            rustc_target: riscv64gc-unknown-none-elf
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rustc_target }}
-          components: rust-src
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-aarch64 qemu-system-riscv64 gdb-multiarch llvm-dev libclang-dev wget
-          cargo install --version 0.3.0 --locked cargo-binutils
-          cargo install cargo-xbuild
+
+      # 所有依赖项都已在容器中，不再需要安装步骤。
+
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -77,11 +77,11 @@ jobs:
       - name: Unit Test
         run: make test
 
-  # this job is for compilation test, it will make sure all aarch64, riscv64, loongarch64 can be compiled successfully
-  # there is no actual running in this job
   build:
     name: build
     runs-on: ubuntu-latest
+    # 在预构建的 Docker 容器中运行所有步骤
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
     strategy:
       fail-fast: false
       matrix:
@@ -89,53 +89,32 @@ jobs:
           # aarch64
           - arch: aarch64
             board: "qemu-gicv3"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "qemu-gicv2"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "zcu102"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "imx8mp"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "rk3568"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "rk3588"
-            rustc_target: aarch64-unknown-none
           - arch: aarch64
             board: "ok6254-c"
-            rustc_target: aarch64-unknown-none
           # riscv64
           - arch: riscv64
             board: "qemu-aia"
-            rustc_target: riscv64gc-unknown-none-elf
           - arch: riscv64
             board: "qemu-plic"
-            rustc_target: riscv64gc-unknown-none-elf
           # loongarch64
           - arch: loongarch64
             board: "ls3a5000"
-            rustc_target: loongarch64-unknown-none
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rustc_target }}
-          components: rust-src
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
-          cargo install --version 0.3.0 --locked cargo-binutils
-          cargo install cargo-xbuild
-          wget -q https://github.com/sunhaiyong1978/CLFS-for-LoongArch/releases/download/8.0/loongarch64-clfs-8.0-cross-tools-gcc-full.tar.xz
-          tar -xf loongarch64-clfs-8.0-cross-tools-gcc-full.tar.xz
-          echo "$GITHUB_WORKSPACE/cross-tools/bin" >> $GITHUB_PATH
+
+      # 所有依赖项，包括LoongArch工具链，都已在容器中，不再需要安装步骤。
+
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -143,60 +122,25 @@ jobs:
       - name: Build
         run: make
 
-  # this job is for booting root and nonroot inside qemu for system test
   systemtest:
-    # if: false # we need to update corresponding scripts for the new board abstraction
     name: systemtest
+    # 建议 runs-on 的系统与容器基础镜像保持一致，以获得最佳兼容性
     runs-on: ubuntu-22.04
+    # 在预构建的 Docker 容器中运行所有步骤
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
     strategy:
       fail-fast: false
       matrix:
         include:
-          # aarch64
           - arch: aarch64
-            rustc_target: aarch64-unknown-none
             board: "qemu-gicv3"
-          # riscv64
           - arch: riscv64
-            rustc_target: riscv64gc-unknown-none-elf
             board: "qemu-plic"
-          # Because other features need to be customized scripts
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rustc_target }}
-          components: rust-src
 
-      - name: Setup QEMU from Source
-        uses: ./.github/actions/setup-qemu
-        with:
-          qemu-version: '9.0.2'
-          install-path: '/opt/qemu'
-
-      - name: Setup ARM aarch64-none-linux-gnu
-        if: matrix.arch == 'aarch64'
-        uses: ./.github/actions/setup-aarch64-none-linux-gnu
-        with:
-          version: '10.3-2021.07' 
-          install-path: '/opt/aarch64-none-linux-gnu'
-
-      - name: Setup RISCV riscv64-unknown-linux-gnu
-        if: matrix.arch == 'riscv64'
-        uses: ./.github/actions/setup-riscv64-unknown-linux-gnu
-        with:
-          version: '13.2.0' 
-          install-path: '/opt/riscv64-unknown-linux-gnu'
-
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-aarch64 qemu-system-riscv64 gdb-multiarch llvm-dev libclang-dev wget expect device-tree-compiler p7zip-full gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu
-          cargo install --version 0.3.0 --locked cargo-binutils
-          cargo install cargo-xbuild
+      # 所有工具链（Rust, QEMU, ARM GCC, RISCV GCC）都已预装在容器中，不再需要安装步骤。
 
       - name: Set up environment variables
         run: |
@@ -205,6 +149,8 @@ jobs:
       - name: Run System Test
         run: make stest
 
+  # 此作业很轻量，不需要大型自定义CI镜像。
+  # 在标准运行器上运行它更高效。
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
@@ -213,5 +159,5 @@ jobs:
         uses: actions/checkout@v4
       - name: License Check
         run: |
-          set -x  
+          set -x
           ./tools/license_checker.sh
