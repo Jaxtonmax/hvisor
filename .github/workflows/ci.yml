@@ -160,8 +160,14 @@ jobs:
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+      - name: Check if aarch64 include directory exists
+        run: |
+          echo "检查路径: /usr/aarch64-linux-gnu/include/"
+          ls -ld /usr/aarch64-linux-gnu/include/
       - name: Check aarch64-none-linux-gnu-gcc version
-        run: aarch64-none-linux-gnu-gcc --version
+        run: 
+          aarch64-none-linux-gnu-gcc --version
+          aarch64-linux-gnu-gcc --version
       - name: Run System Test
         run: make stest
 
