@@ -160,6 +160,8 @@ jobs:
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+      - name: Check aarch64-none-linux-gnu-gcc version
+        run: aarch64-none-linux-gnu-gcc --version
       - name: Run System Test
         run: make stest
 
