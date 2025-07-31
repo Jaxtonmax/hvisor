@@ -161,12 +161,24 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
 
+      - name: Install Cross-Compile Development Libraries
+        run: |
+          echo "### Installing cross-compile libraries for ${{ matrix.arch }} ###"
+          sudo apt-get update
+          if [ "${{ matrix.arch }}" == "aarch64" ]; then
+            sudo apt-get install -y libc6-dev-arm64-cross
+          elif [ "${{ matrix.arch }}" == "riscv64" ]; then
+            # RISC-V 对应的包名是 libc6-dev-riscv64-cross
+            sudo apt-get install -y libc6-dev-riscv64-cross
+          fi
+
       - name: Check aarch64-none-linux-gnu-gcc version
         run: |
           aarch64-none-linux-gnu-gcc --version
           aarch64-linux-gnu-gcc --version
       # === 新增步骤: 检查交叉编译器的 Sysroot 目录是否存在 ===
       # 这个步骤用于验证我们的诊断，它会列出目标架构的头文件和库目录。
+      # === 步骤 2: 验证 Sysroot 目录是否存在 (可选但推荐) ===
       - name: Verify Sysroot Directories Exist
         run: |
           echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
@@ -175,21 +187,15 @@ jobs:
           elif [ "${{ matrix.arch }}" == "riscv64" ]; then
             SYSROOT_PATH="/usr/riscv64-linux-gnu"
           fi
-
           echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
           ls -la "${SYSROOT_PATH}"
 
-          echo "--- Checking include directory: ${SYSROOT_PATH}/include ---"
-          ls -la "${SYSROOT_PATH}/include"
 
-          echo "--- Checking library directory: ${SYSROOT_PATH}/lib ---"
-          ls -la "${SYSROOT_PATH}/lib"
-
-
-      # === 修复步骤: 动态修复构建脚本，为交叉编译器注入正确的 Sysroot ===
+     # === 步骤 3: 强制编译器使用新安装的库 ===
+      # 通过注入 --sysroot 参数，我们明确告诉编译器使用上一步安装的库文件，
+      # 从而避免任何路径混淆，并确保使用的是我们期望的版本。
       - name: Patch Cross-Compile Command with Correct Sysroot
         run: |
-          # 根据矩阵中的架构，确定正确的 Sysroot 路径和 Make 命令
           if [ "${{ matrix.arch }}" == "aarch64" ]; then
             SYSROOT_PATH="/usr/aarch64-linux-gnu"
             MAKE_SEARCH="make all ARCH=arm64"
@@ -202,10 +208,7 @@ jobs:
             echo "Unsupported architecture for patching: ${{ matrix.arch }}"
             exit 1
           fi
-
-          # 找到需要修复的脚本
           SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
-
           if [ -f "$SCRIPT_PATH" ]; then
             echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
             sed -i "s|${MAKE_SEARCH}|${MAKE_REPLACE}|g" "$SCRIPT_PATH"
