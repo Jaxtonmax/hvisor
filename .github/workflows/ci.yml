@@ -184,41 +184,40 @@ jobs:
       - name: Verify Sysroot Directories Exist
         run: |
           echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
-          if [ "${{ matrix.arch }}" == "aarch64" ]; then
+          # === FIX: 使用 = 进行字符串比较，以保证 Shell 脚本的可移植性 ===
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
             SYSROOT_PATH="/usr/aarch64-linux-gnu"
-          elif [ "${{ matrix.arch }}" == "riscv64" ]; then
+          elif [ "${{ matrix.arch }}" = "riscv64" ]; then
             SYSROOT_PATH="/usr/riscv64-linux-gnu"
           fi
           echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
           ls -la "${SYSROOT_PATH}"
 
+      - name: Patch Cross-Compile Command with Correct Sysroot
+        run: |
+          # === FIX: 使用 = 进行字符串比较，以保证 Shell 脚本的可移植性 ===
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            SYSROOT_PATH="/usr/aarch64-linux-gnu"
+            MAKE_SEARCH="make all ARCH=arm64"
+            MAKE_REPLACE="make all ARCH=arm64 CFLAGS='--sysroot=${SYSROOT_PATH}'"
+          elif [ "${{ matrix.arch }}" = "riscv64" ]; then
+            SYSROOT_PATH="/usr/riscv64-linux-gnu"
+            MAKE_SEARCH="make all ARCH=riscv64"
+            MAKE_REPLACE="make all ARCH=riscv64 CFLAGS='--sysroot=${SYSROOT_PATH}'"
+          else
+            echo "Unsupported architecture for patching: ${{ matrix.arch }}"
+            exit 1
+          fi
+          SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
+          if [ -f "$SCRIPT_PATH" ]; then
+            echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
+            sed -i "s|${MAKE_SEARCH}|${MAKE_REPLACE}|g" "$SCRIPT_PATH"
+            echo "Patch applied successfully. Patched content:"
+            grep --color=always "${MAKE_REPLACE}" "$SCRIPT_PATH"
+          else
+            echo "Warning: Build script $SCRIPT_PATH not found. Skipping patch."
+          fi
 
-     # === 步骤 3: 强制编译器使用新安装的库 ===
-      # 通过注入 --sysroot 参数，我们明确告诉编译器使用上一步安装的库文件，
-      # 从而避免任何路径混淆，并确保使用的是我们期望的版本。
-      # - name: Patch Cross-Compile Command with Correct Sysroot
-      #   run: |
-      #     if [ "${{ matrix.arch }}" == "aarch64" ]; then
-      #       SYSROOT_PATH="/usr/aarch64-linux-gnu"
-      #       MAKE_SEARCH="make all ARCH=arm64"
-      #       MAKE_REPLACE="make all ARCH=arm64 CFLAGS='--sysroot=${SYSROOT_PATH}'"
-      #     elif [ "${{ matrix.arch }}" == "riscv64" ]; then
-      #       SYSROOT_PATH="/usr/riscv64-linux-gnu"
-      #       MAKE_SEARCH="make all ARCH=riscv64"
-      #       MAKE_REPLACE="make all ARCH=riscv64 CFLAGS='--sysroot=${SYSROOT_PATH}'"
-      #     else
-      #       echo "Unsupported architecture for patching: ${{ matrix.arch }}"
-      #       exit 1
-      #     fi
-      #     SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
-      #     if [ -f "$SCRIPT_PATH" ]; then
-      #       echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
-      #       sed -i "s|${MAKE_SEARCH}|${MAKE_REPLACE}|g" "$SCRIPT_PATH"
-      #       echo "Patch applied successfully. Patched content:"
-      #       grep --color=always "${MAKE_REPLACE}" "$SCRIPT_PATH"
-      #     else
-      #       echo "Warning: Build script $SCRIPT_PATH not found. Skipping patch."
-      #     fi
 
       - name: Run System Test
         run: make stest
