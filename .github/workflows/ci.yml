@@ -166,12 +166,10 @@ jobs:
           echo "### Installing cross-compile libraries for ${{ matrix.arch }} ###"
           sudo apt-get update
           if [ "${{ matrix.arch }}" == "aarch64" ]; then
-            sudo apt-get install -y libc6-dev-arm64-cross;
-            sudo apt-get install -y gcc-aarch64-linux-gnu
+            sudo apt-get install -y libc6-dev-arm64-cross
           elif [ "${{ matrix.arch }}" == "riscv64" ]; then
             # RISC-V 对应的包名是 libc6-dev-riscv64-cross
-            sudo apt-get install -y libc6-dev-riscv64-cross;
-            sudo apt-get install -y gcc-riscv64-linux-gnu
+            sudo apt-get install -y libc6-dev-riscv64-cross
           fi
 
       - name: Check aarch64-none-linux-gnu-gcc version
