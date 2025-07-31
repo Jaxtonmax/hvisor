@@ -1,8 +1,7 @@
 # hvisor Github Actions CI
 # wheatfox <wheatfox17@icloud.com>
 #
-# 此工作流已更新为使用预构建的 Docker 容器，该容器包含了所有必需的依赖项和工具链。
-# 这通过消除重复的设置步骤，显著加快了 CI 流程。
+# 此工作流已更新为使用预构建的 Docker 容器，并修复了在 GitHub Actions 环境中的网络问题。
 
 name: CI
 
@@ -23,26 +22,25 @@ env:
   # ============================== 重要 ==============================
   # 请将下面的路径替换为您在容器仓库中的 CI 镜像路径。
   #
-  # - 对于 GitHub Container Registry (GHCR)，格式为: ghcr.io/您的GitHub用户名/您的仓库名:标签
-  #   示例: ghcr.io/wheatfox/hvisor:ci-latest
-  #
-  # - 对于 Docker Hub，格式为: 您的DockerHub用户名/您的镜像名:标签
-  #   示例: wheatfox/hvisor-ci:latest
-  #
-  CI_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:wzm # <-- 请务必替换此行为您自己的镜像路径!
+  CI_IMAGE: ghcr.io/wheatfox/hvisor:ci-latest # <-- 请务必替换此行为您自己的镜像路径!
 
 jobs:
   linter:
     name: linter
     runs-on: ubuntu-latest
-    # 在预构建的 Docker 容器中运行所有步骤
     container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
+    # 解决从 GitHub Actions Runner 访问国内镜像超时的问题。
+    env:
+      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
+      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     steps:
-      # 代码被检出到容器的工作区中
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 所有依赖项（Rust, QEMU 等）都已在容器中，不再需要安装步骤。
+      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
+      - name: Disable rustup auto update
+        run: rustup set auto-self-update disable
 
       - name: Format Check
         run: make fmt-test
@@ -50,8 +48,11 @@ jobs:
   unittest:
     name: unittest
     runs-on: ubuntu-latest
-    # 在预构建的 Docker 容器中运行所有步骤
     container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
+    env:
+      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
+      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +69,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 所有依赖项都已在容器中，不再需要安装步骤。
+      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
+      - name: Disable rustup auto update
+        run: rustup set auto-self-update disable
 
       - name: Set up environment variables
         run: |
@@ -80,8 +83,11 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    # 在预构建的 Docker 容器中运行所有步骤
     container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
+    env:
+      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
+      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +119,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 所有依赖项，包括LoongArch工具链，都已在容器中，不再需要安装步骤。
+      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
+      - name: Disable rustup auto update
+        run: rustup set auto-self-update disable
 
       - name: Set up environment variables
         run: |
@@ -124,10 +132,12 @@ jobs:
 
   systemtest:
     name: systemtest
-    # 建议 runs-on 的系统与容器基础镜像保持一致，以获得最佳兼容性
     runs-on: ubuntu-22.04
-    # 在预构建的 Docker 容器中运行所有步骤
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    container: $ghcr.io/jaxtonmax/hvisor-ci:wzm
+    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
+    env:
+      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
+      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     strategy:
       fail-fast: false
       matrix:
@@ -140,7 +150,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 所有工具链（Rust, QEMU, ARM GCC, RISCV GCC）都已预装在容器中，不再需要安装步骤。
+      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
+      - name: Disable rustup auto update
+        run: rustup set auto-self-update disable
 
       - name: Set up environment variables
         run: |
@@ -149,8 +161,7 @@ jobs:
       - name: Run System Test
         run: make stest
 
-  # 此作业很轻量，不需要大型自定义CI镜像。
-  # 在标准运行器上运行它更高效。
+  # 此作业很轻量，保持不变
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
