@@ -133,7 +133,9 @@ jobs:
   systemtest:
     name: systemtest
     runs-on: ubuntu-22.04
-    container: $ghcr.io/jaxtonmax/hvisor-ci:wzm
+    container: 
+      image: ghcr.io/jaxtonmax/hvisor-ci:wzm
+      options: --cap-add=SYS_ADMIN --privileged
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
