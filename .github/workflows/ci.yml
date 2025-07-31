@@ -188,37 +188,37 @@ jobs:
           # 这个 ls 如果失败，整个步骤就会失败，非常明确
           ls -d "${SYSROOT_PATH}/include"
 
-      # === FIX 2: 使用更健壮的方式来修复构建脚本 ===
-      # 不再替换整行，而是在找到目标行后，在行尾追加 CFLAGS，这能避免空格等问题。
-      - name: Robustly Patch Cross-Compile Command with Correct Sysroot
-        run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            SYSROOT_PATH="/usr/aarch64-linux-gnu"
-            # 只搜索关键部分，使其更健壮
-            MAKE_KEYWORD="make all ARCH=arm64"
-          elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-            SYSROOT_PATH="/usr/riscv64-linux-gnu"
-            MAKE_KEYWORD="make all ARCH=riscv64"
-          else
-            echo "Unsupported architecture for patching: ${{ matrix.arch }}"
-            exit 1
-          fi
+      # # === FIX 2: 使用更健壮的方式来修复构建脚本 ===
+      # # 不再替换整行，而是在找到目标行后，在行尾追加 CFLAGS，这能避免空格等问题。
+      # - name: Robustly Patch Cross-Compile Command with Correct Sysroot
+      #   run: |
+      #     if [ "${{ matrix.arch }}" = "aarch64" ]; then
+      #       SYSROOT_PATH="/usr/aarch64-linux-gnu"
+      #       # 只搜索关键部分，使其更健壮
+      #       MAKE_KEYWORD="make all ARCH=arm64"
+      #     elif [ "${{ matrix.arch }}" = "riscv64" ]; then
+      #       SYSROOT_PATH="/usr/riscv64-linux-gnu"
+      #       MAKE_KEYWORD="make all ARCH=riscv64"
+      #     else
+      #       echo "Unsupported architecture for patching: ${{ matrix.arch }}"
+      #       exit 1
+      #     fi
 
-          SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
+      #     SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
 
-          if [ -f "$SCRIPT_PATH" ]; then
-            echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
-            # 在包含 MAKE_KEYWORD 的那一行结尾($)追加我们的 CFLAGS
-            sed -i "/${MAKE_KEYWORD}/ s/$/ CFLAGS='--sysroot=${SYSROOT_PATH}'/" "$SCRIPT_PATH"
+      #     if [ -f "$SCRIPT_PATH" ]; then
+      #       echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
+      #       # 在包含 MAKE_KEYWORD 的那一行结尾($)追加我们的 CFLAGS
+      #       sed -i "/${MAKE_KEYWORD}/ s/$/ CFLAGS='--sysroot=${SYSROOT_PATH}'/" "$SCRIPT_PATH"
             
-            echo "Patch applied successfully. Verifying content:"
-            # grep 现在只检查我们添加的内容是否存在，只要存在就不会报错
-            grep --color=always -- "--sysroot=${SYSROOT_PATH}" "$SCRIPT_PATH"
-          else
-            echo "Warning: Build script $SCRIPT_PATH not found. Skipping patch."
-            # 如果脚本不存在，也应该让它失败，因为这是一个错误
-            exit 1
-          fi
+      #       echo "Patch applied successfully. Verifying content:"
+      #       # grep 现在只检查我们添加的内容是否存在，只要存在就不会报错
+      #       grep --color=always -- "--sysroot=${SYSROOT_PATH}" "$SCRIPT_PATH"
+      #     else
+      #       echo "Warning: Build script $SCRIPT_PATH not found. Skipping patch."
+      #       # 如果脚本不存在，也应该让它失败，因为这是一个错误
+      #       exit 1
+      #     fi
 
       - name: Run System Test
         run: make stest
