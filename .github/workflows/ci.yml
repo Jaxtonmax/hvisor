@@ -28,7 +28,7 @@ jobs:
   linter:
     name: linter
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     # 解决从 GitHub Actions Runner 访问国内镜像超时的问题。
     env:
@@ -48,7 +48,7 @@ jobs:
   unittest:
     name: unittest
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -83,7 +83,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -134,7 +134,7 @@ jobs:
     name: systemtest
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci:wzm
+      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
       options: --cap-add=SYS_ADMIN --privileged
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -161,17 +161,17 @@ jobs:
 
       # === FIX 1: 安装完整的交叉编译工具链 ===
       # 直接安装 gcc 包，可以确保其所有依赖（包括 libc6-dev 和头文件）都被正确安装。
-      - name: Install Full Cross-Compile Toolchain
-        run: |
-          echo "### Installing full cross-compile toolchain for ${{ matrix.arch }} ###"
-          sudo apt-get update
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu;
-            sudo apt-get install -y libc6-dev-arm64-cross
-          elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-            sudo apt-get install -y gcc-riscv64-linux-gnu;
-            sudo apt-get install -y libc6-dev-riscv64-cross
-          fi
+      # - name: Install Full Cross-Compile Toolchain
+      #   run: |
+      #     echo "### Installing full cross-compile toolchain for ${{ matrix.arch }} ###"
+      #     sudo apt-get update
+      #     if [ "${{ matrix.arch }}" = "aarch64" ]; then
+      #       sudo apt-get install -y gcc-aarch64-linux-gnu;
+      #       sudo apt-get install -y libc6-dev-arm64-cross
+      #     elif [ "${{ matrix.arch }}" = "riscv64" ]; then
+      #       sudo apt-get install -y gcc-riscv64-linux-gnu;
+      #       sudo apt-get install -y libc6-dev-riscv64-cross
+      #     fi
 
       # === 验证步骤：现在应该能看到 include 目录了 ===
       - name: Verify Sysroot Directories Exist
