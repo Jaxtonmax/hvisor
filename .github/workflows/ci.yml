@@ -28,7 +28,7 @@ jobs:
   linter:
     name: linter
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     # 解决从 GitHub Actions Runner 访问国内镜像超时的问题。
     env:
@@ -48,7 +48,7 @@ jobs:
   unittest:
     name: unittest
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -83,7 +83,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -134,7 +134,7 @@ jobs:
     name: systemtest
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
+      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
       options: --cap-add=SYS_ADMIN --privileged
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
