@@ -28,7 +28,7 @@ jobs:
   linter:
     name: linter
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.3 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     # 解决从 GitHub Actions Runner 访问国内镜像超时的问题。
     env:
@@ -48,7 +48,7 @@ jobs:
   unittest:
     name: unittest
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.3 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -83,7 +83,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.3 
     # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -134,7 +134,7 @@ jobs:
     name: systemtest
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2 
+      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.3 
       options: --cap-add=SYS_ADMIN --privileged
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -174,19 +174,19 @@ jobs:
       #     fi
 
       # === 验证步骤：现在应该能看到 include 目录了 ===
-      - name: Verify Sysroot Directories Exist
-        run: |
-          echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            SYSROOT_PATH="/usr/aarch64-linux-gnu"
-          elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-            SYSROOT_PATH="/usr/riscv64-linux-gnu"
-          fi
-          echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
-          ls -la "${SYSROOT_PATH}"
-          echo "--- Verifying include directory exists: ${SYSROOT_PATH}/include ---"
-          # 这个 ls 如果失败，整个步骤就会失败，非常明确
-          ls -d "${SYSROOT_PATH}/include"
+      # - name: Verify Sysroot Directories Exist
+      #   run: |
+      #     echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
+      #     if [ "${{ matrix.arch }}" = "aarch64" ]; then
+      #       SYSROOT_PATH="/usr/aarch64-linux-gnu"
+      #     elif [ "${{ matrix.arch }}" = "riscv64" ]; then
+      #       SYSROOT_PATH="/usr/riscv64-linux-gnu"
+      #     fi
+      #     echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
+      #     ls -la "${SYSROOT_PATH}"
+      #     echo "--- Verifying include directory exists: ${SYSROOT_PATH}/include ---"
+      #     # 这个 ls 如果失败，整个步骤就会失败，非常明确
+      #     ls -d "${SYSROOT_PATH}/include"
 
       # # === FIX 2: 使用更健壮的方式来修复构建脚本 ===
       # # 不再替换整行，而是在找到目标行后，在行尾追加 CFLAGS，这能避免空格等问题。
