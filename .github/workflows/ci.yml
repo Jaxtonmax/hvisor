@@ -20,36 +20,34 @@ env:
 
 jobs:
   # =========================================================================
-  # 步骤 1: 新增的预备作业，用于拉取和缓存 CI 镜像
+  # 预备作业，用于拉取和缓存 CI 镜像
   # =========================================================================
   setup-ci-environment:
     name: Setup CI Environment & Cache Image
     runs-on: ubuntu-latest
     steps:
-      # 这个 Action 用于恢复/保存 Docker 层的缓存
-      # 它是整个加速方案的核心
+      # ======================[ 错误修正 ]======================
+      # 将 action-docker-layer-caching 的版本号从 v0.1.1 修正为 v0.0.11
       - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.1.1
+        uses: satackey/action-docker-layer-caching@v0.0.11 # <-- 修正了错误的版本号
         # 忽略错误，因为第一次运行时没有缓存可恢复
         continue-on-error: true
+      # ========================================================
 
       # 拉取我们的 CI 镜像。
       # 如果缓存命中，此步骤会非常快。
-      # 如果缓存未命中（第一次运行），此步骤会比较慢，但它会下载镜像，
-      # 以便上面的 Action 在作业结束时能将其存入缓存。
       - name: Pull CI Image to Populate Cache
         run: docker pull ${{ env.CI_IMAGE }}
 
   # =========================================================================
-  # 步骤 2: 修改所有现有作业，让它们依赖于预备作业
+  # 修改所有现有作业，让它们依赖于预备作业
   # =========================================================================
   linter:
     name: linter
     # 新增 needs，确保此作业在 setup-ci-environment 成功后才开始
     needs: setup-ci-environment
     runs-on: ubuntu-latest
-    # container 指令保持不变，但现在它会因为缓存而变得飞快
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
+    container: ${{ env.CI_IMAGE }}
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -63,10 +61,9 @@ jobs:
 
   unittest:
     name: unittest
-    # 新增 needs
     needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
+    container: ${{ env.CI_IMAGE }}
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -96,10 +93,9 @@ jobs:
 
   build:
     name: build
-    # 新增 needs
     needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
+    container: ${{ env.CI_IMAGE }}
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -141,11 +137,10 @@ jobs:
 
   systemtest:
     name: systemtest
-    # 新增 needs
     needs: setup-ci-environment
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
+      image: ${{ env.CI_IMAGE }}
       options: --cap-add=SYS_ADMIN --privileged
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -166,11 +161,10 @@ jobs:
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Run System Test
         run: make stest
 
-  # 此作业很轻量，可以不依赖缓存，保持不变以快速获得反馈
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
