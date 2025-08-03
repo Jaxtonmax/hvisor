@@ -1,7 +1,5 @@
 # hvisor Github Actions CI
-# wheatfox <wheatfox17@icloud.com>
-#
-# 此工作流已更新为使用预构建的 Docker 容器，并修复了在 GitHub Actions 环境中的网络问题。
+# 此工作流已更新，通过引入缓存预备作业来加速容器启动。
 
 name: CI
 
@@ -17,39 +15,58 @@ on:
   workflow_dispatch:
 
 env:
-  MODE: debug
-  #
-  # ============================== 重要 ==============================
-  # 请将下面的路径替换为您在容器仓库中的 CI 镜像路径。
-  #
-  CI_IMAGE: ghcr.io/wheatfox/hvisor:ci-latest # <-- 请务必替换此行为您自己的镜像路径!
+  # 定义 CI 镜像的名称和标签，方便统一管理
+  CI_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
 
 jobs:
+  # =========================================================================
+  # 步骤 1: 新增的预备作业，用于拉取和缓存 CI 镜像
+  # =========================================================================
+  setup-ci-environment:
+    name: Setup CI Environment & Cache Image
+    runs-on: ubuntu-latest
+    steps:
+      # 这个 Action 用于恢复/保存 Docker 层的缓存
+      # 它是整个加速方案的核心
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.1.1
+        # 忽略错误，因为第一次运行时没有缓存可恢复
+        continue-on-error: true
+
+      # 拉取我们的 CI 镜像。
+      # 如果缓存命中，此步骤会非常快。
+      # 如果缓存未命中（第一次运行），此步骤会比较慢，但它会下载镜像，
+      # 以便上面的 Action 在作业结束时能将其存入缓存。
+      - name: Pull CI Image to Populate Cache
+        run: docker pull ${{ env.CI_IMAGE }}
+
+  # =========================================================================
+  # 步骤 2: 修改所有现有作业，让它们依赖于预备作业
+  # =========================================================================
   linter:
     name: linter
+    # 新增 needs，确保此作业在 setup-ci-environment 成功后才开始
+    needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
-    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
-    # 解决从 GitHub Actions Runner 访问国内镜像超时的问题。
+    # container 指令保持不变，但现在它会因为缓存而变得飞快
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-
       - name: Format Check
         run: make fmt-test
 
   unittest:
     name: unittest
+    # 新增 needs
+    needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
-    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -68,11 +85,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -82,9 +96,10 @@ jobs:
 
   build:
     name: build
+    # 新增 needs
+    needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
-    # === FIX: 覆盖容器内的环境变量以使用官方 Rust 源 ===
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -92,7 +107,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # aarch64
           - arch: aarch64
             board: "qemu-gicv3"
           - arch: aarch64
@@ -107,22 +121,17 @@ jobs:
             board: "rk3588"
           - arch: aarch64
             board: "ok6254-c"
-          # riscv64
           - arch: riscv64
             board: "qemu-aia"
           - arch: riscv64
             board: "qemu-plic"
-          # loongarch64
           - arch: loongarch64
             board: "ls3a5000"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      # === FIX: 禁用 rustup 自动更新以增加稳定性 ===
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
@@ -132,9 +141,11 @@ jobs:
 
   systemtest:
     name: systemtest
+    # 新增 needs
+    needs: setup-ci-environment
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.1 
+      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
       options: --cap-add=SYS_ADMIN --privileged
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
@@ -150,80 +161,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-
-      # === FIX 1: 安装完整的交叉编译工具链 ===
-      # 直接安装 gcc 包，可以确保其所有依赖（包括 libc6-dev 和头文件）都被正确安装。
-      # - name: Install Full Cross-Compile Toolchain
-      #   run: |
-      #     echo "### Installing full cross-compile toolchain for ${{ matrix.arch }} ###"
-      #     sudo apt-get update
-      #     if [ "${{ matrix.arch }}" = "aarch64" ]; then
-      #       sudo apt-get install -y gcc-aarch64-linux-gnu;
-      #       sudo apt-get install -y libc6-dev-arm64-cross
-      #     elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-      #       sudo apt-get install -y gcc-riscv64-linux-gnu;
-      #       sudo apt-get install -y libc6-dev-riscv64-cross
-      #     fi
-
-      # === 验证步骤：现在应该能看到 include 目录了 ===
-      # - name: Verify Sysroot Directories Exist
-      #   run: |
-      #     echo "### Verifying Sysroot for ${{ matrix.arch }} ###"
-      #     if [ "${{ matrix.arch }}" = "aarch64" ]; then
-      #       SYSROOT_PATH="/usr/aarch64-linux-gnu"
-      #     elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-      #       SYSROOT_PATH="/usr/riscv64-linux-gnu"
-      #     fi
-      #     echo "--- Checking main sysroot directory: ${SYSROOT_PATH} ---"
-      #     ls -la "${SYSROOT_PATH}"
-      #     echo "--- Verifying include directory exists: ${SYSROOT_PATH}/include ---"
-      #     # 这个 ls 如果失败，整个步骤就会失败，非常明确
-      #     ls -d "${SYSROOT_PATH}/include"
-
-      # # === FIX 2: 使用更健壮的方式来修复构建脚本 ===
-      # # 不再替换整行，而是在找到目标行后，在行尾追加 CFLAGS，这能避免空格等问题。
-      # - name: Robustly Patch Cross-Compile Command with Correct Sysroot
-      #   run: |
-      #     if [ "${{ matrix.arch }}" = "aarch64" ]; then
-      #       SYSROOT_PATH="/usr/aarch64-linux-gnu"
-      #       # 只搜索关键部分，使其更健壮
-      #       MAKE_KEYWORD="make all ARCH=arm64"
-      #     elif [ "${{ matrix.arch }}" = "riscv64" ]; then
-      #       SYSROOT_PATH="/usr/riscv64-linux-gnu"
-      #       MAKE_KEYWORD="make all ARCH=riscv64"
-      #     else
-      #       echo "Unsupported architecture for patching: ${{ matrix.arch }}"
-      #       exit 1
-      #     fi
-
-      #     SCRIPT_PATH="platform/${{ matrix.arch }}/${{ matrix.board }}/test/systemtest/trootfs_deploy.sh"
-
-      #     if [ -f "$SCRIPT_PATH" ]; then
-      #       echo "Patching '$SCRIPT_PATH' to add correct sysroot for cross-compilation..."
-      #       # 在包含 MAKE_KEYWORD 的那一行结尾($)追加我们的 CFLAGS
-      #       sed -i "/${MAKE_KEYWORD}/ s/$/ CFLAGS='--sysroot=${SYSROOT_PATH}'/" "$SCRIPT_PATH"
-            
-      #       echo "Patch applied successfully. Verifying content:"
-      #       # grep 现在只检查我们添加的内容是否存在，只要存在就不会报错
-      #       grep --color=always -- "--sysroot=${SYSROOT_PATH}" "$SCRIPT_PATH"
-      #     else
-      #       echo "Warning: Build script $SCRIPT_PATH not found. Skipping patch."
-      #       # 如果脚本不存在，也应该让它失败，因为这是一个错误
-      #       exit 1
-      #     fi
-
+          "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Run System Test
         run: make stest
 
-  # 此作业很轻量，保持不变
+  # 此作业很轻量，可以不依赖缓存，保持不变以快速获得反馈
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
