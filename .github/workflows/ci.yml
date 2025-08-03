@@ -37,8 +37,7 @@ jobs:
       # 拉取我们的 CI 镜像。
       # 如果缓存命中，此步骤会非常快。
       - name: Pull CI Image to Populate Cache
-        run: docker pull ${{ env.CI_IMAGE }}
-
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
   # =========================================================================
   # 修改所有现有作业，让它们依赖于预备作业
   # =========================================================================
@@ -47,7 +46,7 @@ jobs:
     # 新增 needs，确保此作业在 setup-ci-environment 成功后才开始
     needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ${{ env.CI_IMAGE }}
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -63,7 +62,7 @@ jobs:
     name: unittest
     needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ${{ env.CI_IMAGE }}
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -95,7 +94,7 @@ jobs:
     name: build
     needs: setup-ci-environment
     runs-on: ubuntu-latest
-    container: ${{ env.CI_IMAGE }}
+    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
@@ -140,7 +139,7 @@ jobs:
     needs: setup-ci-environment
     runs-on: ubuntu-22.04
     container: 
-      image: ${{ env.CI_IMAGE }}
+      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
       options: --cap-add=SYS_ADMIN --privileged
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
