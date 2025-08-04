@@ -32,7 +32,7 @@ jobs:
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
 
-      # 2. 拉取镜像（现在它会利用上面的缓存）
+      # 2. 拉取镜像（现在它会利用上面的缓存）2
       - name: Pull CI Image
         run: docker pull ${{ env.CI_IMAGE }}
 
