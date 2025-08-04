@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 此工作流已更新，通过引入缓存预备作业来加速容器启动。
+# 此工作流已更新为正确的缓存模式：每个作业独立管理自己的容器缓存。
 
 name: CI
 
@@ -15,42 +15,26 @@ on:
   workflow_dispatch:
 
 env:
-  # 定义 CI 镜像的名称和标签，方便统一管理
   CI_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
 
 jobs:
   # =========================================================================
-  # 预备作业，用于拉取和缓存 CI 镜像
-  # =========================================================================
-  setup-ci-environment:
-    name: Setup CI Environment & Cache Image
-    runs-on: ubuntu-latest
-    steps:
-      # ======================[ 错误修正 ]======================
-      # 将 action-docker-layer-caching 的版本号从 v0.1.1 修正为 v0.0.11
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11 # <-- 修正了错误的版本号
-        # 忽略错误，因为第一次运行时没有缓存可恢复
-        continue-on-error: true
-      # ========================================================
-
-      # 拉取我们的 CI 镜像。
-      # 如果缓存命中，此步骤会非常快。
-      - name: Pull CI Image to Populate Cache
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
-  # =========================================================================
-  # 修改所有现有作业，让它们依赖于预备作业
+  # 移除了 setup-ci-environment 作业
+  # 将缓存逻辑直接集成到每个需要容器的作业中
   # =========================================================================
   linter:
     name: linter
-    # 新增 needs，确保此作业在 setup-ci-environment 成功后才开始
-    needs: setup-ci-environment
     runs-on: ubuntu-latest
     container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
       RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
       RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     steps:
+      # 在每个作业的开始，都执行缓存恢复操作
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -60,7 +44,6 @@ jobs:
 
   unittest:
     name: unittest
-    needs: setup-ci-environment
     runs-on: ubuntu-latest
     container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
@@ -79,6 +62,10 @@ jobs:
           - arch: riscv64
             board: "qemu-aia"
     steps:
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -92,7 +79,6 @@ jobs:
 
   build:
     name: build
-    needs: setup-ci-environment
     runs-on: ubuntu-latest
     container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
     env:
@@ -123,6 +109,10 @@ jobs:
           - arch: loongarch64
             board: "ls3a5000"
     steps:
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -136,7 +126,6 @@ jobs:
 
   systemtest:
     name: systemtest
-    needs: setup-ci-environment
     runs-on: ubuntu-22.04
     container: 
       image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
@@ -153,6 +142,10 @@ jobs:
           - arch: riscv64
             board: "qemu-plic"
     steps:
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -163,7 +156,8 @@ jobs:
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Run System Test
         run: make stest
-# 第二次提交测试
+
+  # 此作业很轻量，不需要容器，所以不需要缓存
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
