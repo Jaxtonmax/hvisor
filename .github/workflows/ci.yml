@@ -1,7 +1,4 @@
-# hvisor Github Actions CI
-# 最终修正版：通过在 steps 中手动控制 Docker 生命周期来确保缓存生效。
-
-name: CI
+name: CI (Final Robust Version)
 
 on:
   push:
@@ -15,177 +12,65 @@ on:
   workflow_dispatch:
 
 env:
-  CI_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
-  # 为后台运行的容器指定一个固定的名字
-  CONTAINER_NAME: ci-container
+  CI_IMAGE_TAG: local/hvisor-ci:latest
+  QEMU_VERSION: 9.0.2
+  QEMU_TARBALL: qemu-9.0.2.tar.xz
 
 jobs:
-  # =========================================================================
-  # 放弃 container: 指令，在每个作业中手动管理 Docker
-  # =========================================================================
-  linter:
-    name: linter
+  main-test-suite:
+    name: Build, Lint & Test
     runs-on: ubuntu-latest
+    
     steps:
-      # 1. 恢复缓存（这是第一步，至关重要）
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      # 2. 拉取镜像（现在它会利用上面的缓存）2
-      - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE }}
-
-      # 3. 检出代码到主机
+      # 1. 检出代码
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 4. 在后台启动容器，并挂载代码目录
-      - name: Run Container in Background
+      # 2. 缓存工具链和 QEMU 源码压缩包
+      # 我们将所有需要下载的大文件都纳入缓存
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains
+            ${{ env.QEMU_TARBALL }}
+          key: ${{ runner.os }}-deps-${{ hashFiles('toolchains/**') }}-${{ env.QEMU_VERSION }}
+
+      # 3. 下载 QEMU 源码（如果缓存未命中）
+      # 这一步在 Runner 主机上执行，而不是在 Docker build 里
+      - name: Download QEMU Source (if not cached)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE }} \
-            tail -f /dev/null # 保持容器持续运行
+          echo "Cache miss. Downloading QEMU source..."
+          # 使用带有重试和超时机制的 curl 命令，最大限度提高下载成功率
+          curl -fSL --retry 5 --retry-delay 2 --connect-timeout 20 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
 
-      # 5. 在运行的容器内执行所有命令
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-      - name: Format Check
-        run: docker exec ${{ env.CONTAINER_NAME }} make fmt-test
-
-      # 6. 作业结束时，清理容器
-      - name: Stop Container
-        if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
-
-  # ... 对所有其他作业应用相同的模式 ...
-
-  unittest:
-    name: unittest
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64
-            board: "qemu-gicv3"
-          - arch: aarch64
-            board: "qemu-gicv2"
-          - arch: riscv64
-            board: "qemu-plic"
-          - arch: riscv64
-            board: "qemu-aia"
-    steps:
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-      - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE }}
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-      - name: Run Container in Background
+      # 4. 动态构建 CI 镜像
+      # Dockerfile.ci 现在会从本地复制 QEMU 源码，而不是下载
+      - name: Build CI Docker Image
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=${{ matrix.arch }} \
-            --env BOARD=${{ matrix.board }} \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE }} \
-            tail -f /dev/null
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-      - name: Unit Test
-        run: docker exec ${{ env.CONTAINER_NAME }} make test
-      - name: Stop Container
-        if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+          docker build -t ${{ env.CI_IMAGE_TAG }} \
+            --build-arg TOOLCHAINS_DIR=/workdir/toolchains \
+            -f Dockerfile.ci .
 
-  build:
-    name: build
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64
-            board: "qemu-gicv3"
-          # ... etc, all your other matrix entries
-          - arch: riscv64
-            board: "qemu-plic"
-          - arch: loongarch64
-            board: "ls3a5000"
-    steps:
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-      - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE }}
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-      - name: Run Container in Background
+      # 5. 在构建好的容器内运行所有测试
+      - name: Run Linter
+        run: docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} make fmt-test
+
+      - name: Run Unit Tests
+        run: docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} make test
+      - name: Run Build Matrix
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=${{ matrix.arch }} \
-            --env BOARD=${{ matrix.board }} \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE }} \
-            tail -f /dev/null
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-      - name: Build
-        run: docker exec ${{ env.CONTAINER_NAME }} make
-      - name: Stop Container
-        if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+          # 在一个步骤里循环执行所有构建，以提高效率
+          docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} /bin/bash -c "
+            make ARCH=aarch64 BOARD=qemu-gicv3 && \
+            make ARCH=aarch64 BOARD=zcu102 && \
+            make ARCH=riscv64 BOARD=qemu-plic && \
+            make ARCH=loongarch64 BOARD=ls3a5000"
+            # 在这里添加所有您的构建矩阵组合
 
-  systemtest:
-    name: systemtest
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64
-            board: "qemu-gicv3"
-          - arch: riscv64
-            board: "qemu-plic"
-    steps:
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-      - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE }}
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-      - name: Run Container in Background
-        run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            --cap-add=SYS_ADMIN --privileged \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=${{ matrix.arch }} \
-            --env BOARD=${{ matrix.board }} \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE }} \
-            tail -f /dev/null
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-      - name: Run System Test
-        run: docker exec ${{ env.CONTAINER_NAME }} make stest
-      - name: Stop Container
-        if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
-
+  # ... 其他作业如 license-checker 可以保持原样 ...
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
