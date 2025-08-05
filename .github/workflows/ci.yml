@@ -15,7 +15,7 @@ on:
 
 env:
   # 我们给动态构建的镜像一个统一的标签
-  CI_IMAGE_TAG: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.1.0
+  CI_IMAGE_TAG: hvisor-ci:wzm_1.1.0
   QEMU_VERSION: 9.0.2
   QEMU_TARBALL: qemu-9.0.2.tar.xz
 
@@ -39,7 +39,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
       - name: Build CI Docker Image
-        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.1.1.0 .
       - name: Run Linter Check
         run: docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} make fmt-test
 
@@ -74,7 +74,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
       - name: Build CI Docker Image
-        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.1.1.0 .
       - name: Run Unit Test
         run: docker run --rm -v ${{ github.workspace }}:/workdir -e ARCH=${{ matrix.arch }} -e BOARD=${{ matrix.board }} ${{ env.CI_IMAGE_TAG }} make test
 
@@ -109,7 +109,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
       - name: Build CI Docker Image
-        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.1.1.0 .
       - name: Run Build
         run: docker run --rm -v ${{ github.workspace }}:/workdir -e ARCH=${{ matrix.arch }} -e BOARD=${{ matrix.board }} ${{ env.CI_IMAGE_TAG }} make
 
@@ -140,7 +140,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
       - name: Build CI Docker Image
-        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.1.1.0 .
       - name: Run System Test
         run: docker run --rm --privileged --cap-add=SYS_ADMIN -v ${{ github.workspace }}:/workdir -e ARCH=${{ matrix.arch }} -e BOARD=${{ matrix.board }} ${{ env.CI_IMAGE_TAG }} make stest
 
