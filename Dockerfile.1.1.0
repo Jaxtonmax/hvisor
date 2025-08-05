@@ -1,0 +1,84 @@
+# =========================================================================
+# 阶段 1: QEMU 构建器 (已修复)
+# =========================================================================
+FROM debian:bullseye-slim AS qemu-builder
+
+# 安装编译所需的依赖
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    build-essential \
+    curl \
+    ninja-build \
+    pkg-config \
+    git \
+    python3 \
+    # [解决方案] 添加 python3-venv 来提供 QEMU 构建脚本所需的 ensurepip 模块
+    python3-venv \
+    libglib2.0-dev \
+    libfdt-dev \
+    libpixman-1-dev \
+    zlib1g-dev \
+    libslirp-dev \
+    nettle-dev \
+    meson \
+    flex \
+    bison && \
+    update-ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+ARG QEMU_VERSION=9.0.2
+
+# 从构建上下文（即 Runner 主机或本地目录）复制已经下载好的源码包
+COPY qemu-${QEMU_VERSION}.tar.xz .
+
+# 解压和编译过程不变
+RUN tar -xf "qemu-${QEMU_VERSION}.tar.xz" && rm "qemu-${QEMU_VERSION}.tar.xz"
+WORKDIR /build/qemu-${QEMU_VERSION}
+RUN ./configure --prefix=/install --target-list=aarch64-softmmu,riscv64-softmmu,riscv64-linux-user --enable-kvm --enable-nettle --enable-user --enable-linux-user --enable-slirp --enable-debug && \
+    make -j$(nproc) && make install
+
+# =========================================================================
+# 最终的 CI 基础镜像 (这部分逻辑不变)
+# =========================================================================
+FROM debian:bullseye-slim
+
+ARG TOOLCHAINS_DIR
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential ca-certificates git sudo unzip wget curl expect p7zip-full u-boot-tools device-tree-compiler gdb-multiarch \
+    llvm-dev libclang-dev \
+    gcc-aarch64-linux-gnu libc6-dev-arm64-cross gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
+    libglib2.0-0 libfdt1 libpixman-1-0 libslirp0 && \
+    update-ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=qemu-builder /install /usr/local
+ENV RUSTUP_DIST_SERVER="https://mirrors.ustc.edu.cn/rust-static" \
+    RUSTUP_UPDATE_ROOT="https://mirrors.ustc.edu.cn/rust-static/rustup" \
+    PATH="/root/.cargo/bin:/usr/local/bin:/opt/aarch64-none-linux-gnu/bin:/opt/riscv64-unknown-linux-gnu/bin:/opt/loongarch-clfs-8.0/cross-tools/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain nightly-2024-05-05 && \
+    mkdir -p /root/.cargo && \
+    echo '[source.crates-io]\nreplace-with = "ustc"\n\n[source.ustc]\nregistry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' > /root/.cargo/config.toml && \
+    rustup target add aarch64-unknown-none riscv64gc-unknown-none-elf loongarch64-unknown-none && \
+    rustup component add rust-src rustfmt && \
+    cargo install --version 0.3.0 --locked cargo-binutils && \
+    cargo install --locked cargo-xbuild && \
+    rm -rf /root/.cargo/registry /root/.cargo/git
+# 先设置工作目录
+WORKDIR /workdir
+
+# 【解决方案】添加 COPY 指令，将工具链从构建上下文复制到镜像内部
+# 源路径 `toolchains` 是相对于构建上下文根目录的路径
+# 目标路径 `${TOOLCHAINS_DIR}` 是您通过 build-arg 传入的 /workdir/toolchains
+COPY toolchains/ ${TOOLCHAINS_DIR}/
+
+# 现在，容器内的 ${TOOLCHAINS_DIR} 路径下已经有了文件，可以执行解压
+RUN mkdir -p /opt/aarch64-none-linux-gnu /opt/riscv64-unknown-linux-gnu /opt/loongarch-clfs-8.0 && \
+    tar xJf ${TOOLCHAINS_DIR}/gcc-arm-10.3-2021.07-x86_64-aarch64-none-linux-gnu.tar.xz -C /opt/aarch64-none-linux-gnu --strip-components=1 && \
+    tar xJf ${TOOLCHAINS_DIR}/riscv64-glibc-ubuntu-22.04-gcc-nightly-2025.06.07-nightly.tar.xz -C /opt/riscv64-unknown-linux-gnu --strip-components=1 && \
+    tar xf ${TOOLCHAINS_DIR}/loongarch64-clfs-8.0-cross-tools-gcc-full.tar.xz -C /opt/loongarch-clfs-8.0 && \
+    # （可选优化）解压后可以删除这些大的压缩包，以减小最终镜像体积
+    rm -rf ${TOOLCHAINS_DIR}
