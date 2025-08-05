@@ -1,4 +1,6 @@
-name: CI (Final Robust Version)
+# hvisor Github Actions CI - 最终、完整、健壮的版本
+
+name: CI
 
 on:
   push:
@@ -12,22 +14,19 @@ on:
   workflow_dispatch:
 
 env:
-  CI_IMAGE_TAG: local/hvisor-ci:latest
+  # 我们给动态构建的镜像一个统一的标签
+  CI_IMAGE_TAG: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.1.0
   QEMU_VERSION: 9.0.2
   QEMU_TARBALL: qemu-9.0.2.tar.xz
 
 jobs:
-  main-test-suite:
-    name: Build, Lint & Test
+  # Linter 作业
+  linter:
+    name: linter
     runs-on: ubuntu-latest
-    
     steps:
-      # 1. 检出代码
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      # 2. 缓存工具链和 QEMU 源码压缩包
-      # 我们将所有需要下载的大文件都纳入缓存
       - name: Cache Dependencies
         id: cache-deps
         uses: actions/cache@v4
@@ -36,41 +35,116 @@ jobs:
             toolchains
             ${{ env.QEMU_TARBALL }}
           key: ${{ runner.os }}-deps-${{ hashFiles('toolchains/**') }}-${{ env.QEMU_VERSION }}
-
-      # 3. 下载 QEMU 源码（如果缓存未命中）
-      # 这一步在 Runner 主机上执行，而不是在 Docker build 里
       - name: Download QEMU Source (if not cached)
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss. Downloading QEMU source..."
-          # 使用带有重试和超时机制的 curl 命令，最大限度提高下载成功率
-          curl -fSL --retry 5 --retry-delay 2 --connect-timeout 20 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
-
-      # 4. 动态构建 CI 镜像
-      # Dockerfile.ci 现在会从本地复制 QEMU 源码，而不是下载
+        run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
       - name: Build CI Docker Image
-        run: |
-          docker build -t ${{ env.CI_IMAGE_TAG }} \
-            --build-arg TOOLCHAINS_DIR=/workdir/toolchains \
-            -f Dockerfile.ci .
-
-      # 5. 在构建好的容器内运行所有测试
-      - name: Run Linter
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+      - name: Run Linter Check
         run: docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} make fmt-test
 
-      - name: Run Unit Tests
-        run: docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} make test
-      - name: Run Build Matrix
-        run: |
-          # 在一个步骤里循环执行所有构建，以提高效率
-          docker run --rm -v ${{ github.workspace }}:/workdir ${{ env.CI_IMAGE_TAG }} /bin/bash -c "
-            make ARCH=aarch64 BOARD=qemu-gicv3 && \
-            make ARCH=aarch64 BOARD=zcu102 && \
-            make ARCH=riscv64 BOARD=qemu-plic && \
-            make ARCH=loongarch64 BOARD=ls3a5000"
-            # 在这里添加所有您的构建矩阵组合
+  # Unittest 作业
+  unittest:
+    name: unittest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            board: "qemu-gicv3"
+          - arch: aarch64
+            board: "qemu-gicv2"
+          - arch: riscv64
+            board: "qemu-plic"
+          - arch: riscv64
+            board: "qemu-aia"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains
+            ${{ env.QEMU_TARBALL }}
+          key: ${{ runner.os }}-deps-${{ hashFiles('toolchains/**') }}-${{ env.QEMU_VERSION }}
+      - name: Download QEMU Source (if not cached)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
+      - name: Build CI Docker Image
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+      - name: Run Unit Test
+        run: docker run --rm -v ${{ github.workspace }}:/workdir -e ARCH=${{ matrix.arch }} -e BOARD=${{ matrix.board }} ${{ env.CI_IMAGE_TAG }} make test
 
-  # ... 其他作业如 license-checker 可以保持原样 ...
+  # Build 作业
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            board: "qemu-gicv3"
+          - arch: aarch64
+            board: "zcu102"
+          - arch: riscv64
+            board: "qemu-plic"
+          - arch: loongarch64
+            board: "ls3a5000"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains
+            ${{ env.QEMU_TARBALL }}
+          key: ${{ runner.os }}-deps-${{ hashFiles('toolchains/**') }}-${{ env.QEMU_VERSION }}
+      - name: Download QEMU Source (if not cached)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
+      - name: Build CI Docker Image
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+      - name: Run Build
+        run: docker run --rm -v ${{ github.workspace }}:/workdir -e ARCH=${{ matrix.arch }} -e BOARD=${{ matrix.board }} ${{ env.CI_IMAGE_TAG }} make
+
+  # Systemtest 作业 (已补全并修正)
+  systemtest:
+    name: systemtest
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            board: "qemu-gicv3"
+          - arch: riscv64
+            board: "qemu-plic"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains
+            ${{ env.QEMU_TARBALL }}
+          key: ${{ runner.os }}-deps-${{ hashFiles('toolchains/**') }}-${{ env.QEMU_VERSION }}
+      - name: Download QEMU Source (if not cached)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: curl -fSL --retry 5 -o ${{ env.QEMU_TARBALL }} "https://download.qemu.org/qemu-${{ env.QEMU_VERSION }}.tar.xz"
+      - name: Build CI Docker Image
+        run: docker build -t ${{ env.CI_IMAGE_TAG }} -f Dockerfile.ci .
+      - name: Run System Test
+        run: docker run --rm --privileged --cap-add=SYS_ADMIN -v ${{ github.workspace }}:/workdir -e ARCH=${{ matrix.arch }} -e BOARD=${{ matrix.board }} ${{ env.CI_IMAGE_TAG }} make stest
+
+  # License-checker 作业 (保持不变)
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
