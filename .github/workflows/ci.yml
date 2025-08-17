@@ -165,6 +165,54 @@ jobs:
       - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+# =========================================================================
+# ！！！一次性的诊断专用 Job ！！！
+# 这个 Job 的唯一目的就是进入 LoongArch64 容器，执行一系列检查命令，
+# 并将结果打印出来，以便我们进行最终的问题诊断。
+# =========================================================================
+  debug-loongarch-env:
+    name: Debug LoongArch Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
+      - name: Pull LoongArch CI Image
+        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:loongarch64_${{ env.IMAGE_VERSION }}
+
+      - name: Run Forensic Investigation inside the Container
+        # 我们将以交互模式启动容器，并连续执行一系列诊断命令
+        # continue-on-error 确保即使某个命令失败，我们也能看到所有输出
+        continue-on-error: true
+        run: |
+          docker run --rm --name debug-container \
+            --entrypoint sh \
+            ${{ env.CI_IMAGE_PREFIX }}:loongarch64_${{ env.IMAGE_VERSION }} \
+            -c "
+              echo '================================================================='
+              echo '=== 1. 验证工具链目录内容 (Verifying toolchain directory contents) ==='
+              echo '================================================================='
+              ls -lA /opt/toolchain/cross-tools/bin/
+              
+              echo
+              echo '================================================================='
+              echo '=== 2. 验证默认的 PATH 环境变量 (Verifying default PATH variable) ==='
+              echo '================================================================='
+              echo \$PATH
+              
+              echo
+              echo '================================================================='
+              echo '=== 3. 尝试用绝对路径直接执行链接器 (Testing direct execution) ==='
+              echo '================================================================='
+              /opt/toolchain/cross-tools/bin/loongarch64-clfs-linux-gnu-gcc --version
+              
+              echo
+              echo '================================================================='
+              echo '=== 4. 尝试通过我们之前的方法执行 (Testing execution via modified PATH) ==='
+              echo '================================================================='
+              PATH=/opt/toolchain/cross-tools/bin:\$PATH loongarch64-clfs-linux-gnu-gcc --version
+            "
 
   systemtest:
     name: systemtest
