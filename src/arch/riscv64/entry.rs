@@ -13,8 +13,8 @@
 //
 // Authors:
 //
+use crate::clear_bss;
 use crate::consts::PER_CPU_SIZE;
-
 #[no_mangle]
 #[link_section = ".data"]
 pub static mut CPU_BSS_LOCK: u32 = 1;
