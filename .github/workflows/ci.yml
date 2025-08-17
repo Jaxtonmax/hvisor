@@ -133,18 +133,13 @@ jobs:
         run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
-        # 关键修改：为 LoongArch 架构的容器注入特定的链接器环境变量
+        # 这一步保持上次的修改，因为它正确地为 cargo 设置了链接器名称
         run: |
-          # 默认情况下，链接器环境变量为空
           LINKER_ENV=""
-          # 当矩阵的架构是 loongarch64 时，我们定义这个环境变量
           if [ "${{ matrix.arch }}" == "loongarch64" ]; then
             LINKER_ENV="--env CARGO_TARGET_LOONGARCH64_UNKNOWN_NONE_LINKER=loongarch64-clfs-linux-gnu-gcc"
           fi
-
-          # 在 docker run 命令中，我们使用 $LINKER_ENV 变量
-          # 对于 aarch64 和 riscv64，它为空，不起任何作用
-          # 对于 loongarch64，它会添加 --env CARGO_... 指令
+          
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
             -w /workdir \
@@ -155,8 +150,17 @@ jobs:
             tail -f /dev/null
 
       - name: Build
-        # 我们之前的 MODE=release 策略是正确的，因为它解决了 Makefile 的路径问题，继续保留
-        run: docker exec ${{ env.CONTAINER_NAME }} make MODE=release
+        # 最终解决方案：在执行 make 命令时，为 loongarch64 显式地预置 PATH
+        run: |
+          if [ "${{ matrix.arch }}" == "loongarch64" ]; then
+            # 对于 loongarch64，我们构造一个特殊的命令，它首先设置 PATH，然后执行 make
+            # 注意：\$PATH 中的反斜杠是必须的，以确保 $PATH 是在容器内被解析，而不是在 CI runner 的 shell 中
+            docker exec ${{ env.CONTAINER_NAME }} \
+              sh -c "PATH=/opt/toolchain/cross-tools/bin:\$PATH make MODE=release"
+          else
+            # 对于其他架构，使用之前的简单命令
+            docker exec ${{ env.CONTAINER_NAME }} make MODE=release
+          fi
 
       - name: Stop Container
         if: always()
