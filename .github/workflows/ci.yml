@@ -144,7 +144,7 @@ jobs:
             tail -f /dev/null
 
       - name: Build
-        run: docker exec ${{ env.CONTAINER_NAME }} make
+        run: docker exec ${{ env.CONTAINER_NAME }} make MODE=release
 
       - name: Stop Container
         if: always()
