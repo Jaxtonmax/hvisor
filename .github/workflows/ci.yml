@@ -1,5 +1,7 @@
-# hvisor Github Actions CI
-# 最终优化版：拆分镜像 + 缓存编译产物
+# hvisor Github Actions CI (最终容器化优化版)
+#
+# 这个工作流利用预先构建的 Docker 镜像来提供一个快速、可靠且一致的测试环境。
+# 它通过 Docker 层缓存机制，显著减少了后续运行的启动时间。
 
 name: CI
 
@@ -15,9 +17,10 @@ on:
   workflow_dispatch:
 
 env:
-  # 镜像前缀，标签将从 matrix 中动态获取
+  # 统一管理镜像名称和版本，方便未来升级
   CI_IMAGE_PREFIX: ghcr.io/jaxtonmax/hvisor-ci
-  # 为后台运行的容器指定一个固定的名字
+  IMAGE_VERSION: 1.1.2
+  # 为所有 job 中的容器使用一个统一的名称
   CONTAINER_NAME: ci-container
 
 jobs:
@@ -28,52 +31,30 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 新增: 缓存 Cargo 目录以加速格式化检查 (如果它需要编译的话)
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          # linter 使用 aarch64 镜像和缓存
-          key: ${{ runner.os }}-aarch64-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-aarch64-cargo-
-
       - name: Restore Docker Layer Cache
+        # 关键步骤：尝试从缓存中恢复 Docker 镜像层
         uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
+        continue-on-error: true # 如果缓存未命中或失败，也继续执行
 
       - name: Pull CI Image
-        # linter 作业我们默认使用 aarch64 的镜像，因为它通常最通用
-        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:aarch64_1.1.1
+        # 拉取 aarch64 镜像作为通用的 linter 环境
+        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:aarch64_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
+        # 启动一个后台容器，并将代码目录挂载进去
         run: |
-          # 确保主机上的目录存在，以便 Docker 挂载
-          mkdir -p ~/.cargo/bin ${{ github.workspace }}/target
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
-            -v ~/.cargo/bin:/root/.cargo/bin \
-            -v ~/.cargo/registry:/root/.cargo/registry \
-            -v ~/.cargo/git:/root/.cargo/git \
-            -v ${{ github.workspace }}/target:/workdir/target \
             -w /workdir \
-            --env CARGO_HOME=/root/.cargo \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE_PREFIX }}:aarch64_1.1.1 \
-            tail -f /dev/null
+            ${{ env.CI_IMAGE_PREFIX }}:aarch64_${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null # 使用一个长命令保持容器运行
 
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
       - name: Format Check
+        # 在正在运行的容器内执行命令
         run: docker exec ${{ env.CONTAINER_NAME }} make fmt-test
 
       - name: Stop Container
+        # 无论成功与否，总是在 job 结束时清理容器
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
@@ -83,64 +64,39 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 矩阵现在只关心架构，因为所有依赖都在镜像里了
         include:
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "aarch64_1.1.1"
           - arch: aarch64
             board: "qemu-gicv2"
-            image_tag: "aarch64_1.1.1"
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "riscv64_1.1.1"
           - arch: riscv64
             board: "qemu-aia"
-            image_tag: "riscv64_1.1.1"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      # 新增: 根据架构缓存 Cargo 目录
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
 
       - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.image_tag }}
+        # 根据矩阵中的架构，动态拉取对应的镜像
+        # 由于缓存，这里通常只会下载缺失的顶层
+        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
         run: |
-          mkdir -p ~/.cargo/bin ${{ github.workspace }}/target
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
-            -v ~/.cargo/bin:/root/.cargo/bin \
-            -v ~/.cargo/registry:/root/.cargo/registry \
-            -v ~/.cargo/git:/root/.cargo/git \
-            -v ${{ github.workspace }}/target:/workdir/target \
             -w /workdir \
             --env ARCH=${{ matrix.arch }} \
             --env BOARD=${{ matrix.board }} \
-            --env CARGO_HOME=/root/.cargo \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.image_tag }} \
+            ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }} \
             tail -f /dev/null
 
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
       - name: Unit Test
         run: docker exec ${{ env.CONTAINER_NAME }} make test
 
@@ -157,57 +113,36 @@ jobs:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "aarch64_1.1.1"
+          - arch: aarch64
+            board: "zcu102"
+          - arch: aarch64
+            board: "rk3588"
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "riscv64_1.1.1"
           - arch: loongarch64
             board: "ls3a5000"
-            image_tag: "loongarch64_1.1.1"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-cargo-
-            
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
 
       - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.image_tag }}
+        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
         run: |
-          mkdir -p ~/.cargo/bin ${{ github.workspace }}/target
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
-            -v ~/.cargo/bin:/root/.cargo/bin \
-            -v ~/.cargo/registry:/root/.cargo/registry \
-            -v ~/.cargo/git:/root/.cargo/git \
-            -v ${{ github.workspace }}/target:/workdir/target \
             -w /workdir \
             --env ARCH=${{ matrix.arch }} \
             --env BOARD=${{ matrix.board }} \
-            --env CARGO_HOME=/root/.cargo \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.image_tag }} \
+            --env MODE=${{ env.MODE }} \
+            ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }} \
             tail -f /dev/null
 
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
       - name: Build
         run: docker exec ${{ env.CONTAINER_NAME }} make
 
@@ -217,62 +152,37 @@ jobs:
 
   systemtest:
     name: systemtest
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest # ubuntu-22.04 也可以，但 latest 通常就足够了
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "aarch64_1.1.1"
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "riscv64_1.1.1"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
 
       - name: Pull CI Image
-        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.image_tag }}
+        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
+        # 对于需要特殊权限的系统测试，可以添加 --privileged 标志
         run: |
-          mkdir -p ~/.cargo/bin ${{ github.workspace }}/target
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            --cap-add=SYS_ADMIN --privileged \
+          docker run -d --name ${{ env.CONTAINER_NAME }} --privileged \
             -v ${{ github.workspace }}:/workdir \
-            -v ~/.cargo/bin:/root/.cargo/bin \
-            -v ~/.cargo/registry:/root/.cargo/registry \
-            -v ~/.cargo/git:/root/.cargo/git \
-            -v ${{ github.workspace }}/target:/workdir/target \
             -w /workdir \
             --env ARCH=${{ matrix.arch }} \
             --env BOARD=${{ matrix.board }} \
-            --env CARGO_HOME=/root/.cargo \
-            --env RUSTUP_DIST_SERVER="https://static.rust-lang.org" \
-            --env RUSTUP_UPDATE_ROOT="https://static.rust-lang.org/rustup" \
-            ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.image_tag }} \
+            ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }} \
             tail -f /dev/null
 
-      - name: Disable rustup auto update
-        run: docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
       - name: Run System Test
         run: docker exec ${{ env.CONTAINER_NAME }} make stest
 
@@ -281,6 +191,7 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   license-checker:
+    # 这个 job 很简单，不需要复杂的 Docker 环境，保持原样以实现快速执行
     name: license-checker
     runs-on: ubuntu-latest
     steps:
@@ -288,5 +199,5 @@ jobs:
         uses: actions/checkout@v4
       - name: License Check
         run: |
-          set -x
+          set -x  
           ./tools/license_checker.sh
