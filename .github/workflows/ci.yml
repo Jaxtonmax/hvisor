@@ -1,7 +1,11 @@
-# hvisor Github Actions CI (最终容器化优化版)
+# =========================================================================
+# hvisor Github Actions CI (v2.0 - 最终优化版)
 #
-# 这个工作流利用预先构建的 Docker 镜像来提供一个快速、可靠且一致的测试环境。
-# 它通过 Docker 层缓存机制，显著减少了后续运行的启动时间。
+# - 使用全新的 v2.0.0 系列精简镜像，构建速度更快，体积更小。
+# - 解决了 LoongArch64 的链接器路径问题。
+# - 解决了因镜像体积过大导致的 GitHub Actions 缓存失败问题。
+# - 移除了所有冗余的诊断步骤，配置干净、高效。
+# =========================================================================
 
 name: CI
 
@@ -17,10 +21,9 @@ on:
   workflow_dispatch:
 
 env:
-  # 统一管理镜像名称和版本，方便未来升级
+  # 关键更新：将镜像版本指向我们全新的、经过优化的 2.0.0 版本
   CI_IMAGE_PREFIX: ghcr.io/jaxtonmax/hvisor-ci
-  IMAGE_VERSION: 1.1.2
-  # 为所有 job 中的容器使用一个统一的名称
+  IMAGE_VERSION: 2.0.0
   CONTAINER_NAME: ci-container
 
 jobs:
@@ -32,29 +35,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Restore Docker Layer Cache
-        # 关键步骤：尝试从缓存中恢复 Docker 镜像层
         uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true # 如果缓存未命中或失败，也继续执行
+        continue-on-error: true
 
       - name: Pull CI Image
-        # 拉取 aarch64 镜像作为通用的 linter 环境
         run: docker pull ${{ env.CI_IMAGE_PREFIX }}:aarch64_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
-        # 启动一个后台容器，并将代码目录挂载进去
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
             -w /workdir \
             ${{ env.CI_IMAGE_PREFIX }}:aarch64_${{ env.IMAGE_VERSION }} \
-            tail -f /dev/null # 使用一个长命令保持容器运行
+            tail -f /dev/null
 
       - name: Format Check
-        # 在正在运行的容器内执行命令
         run: docker exec ${{ env.CONTAINER_NAME }} make fmt-test
 
       - name: Stop Container
-        # 无论成功与否，总是在 job 结束时清理容器
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
@@ -64,7 +62,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 矩阵现在只关心架构，因为所有依赖都在镜像里了
         include:
           - arch: aarch64
             board: "qemu-gicv3"
@@ -83,8 +80,6 @@ jobs:
         continue-on-error: true
 
       - name: Pull CI Image
-        # 根据矩阵中的架构，动态拉取对应的镜像
-        # 由于缓存，这里通常只会下载缺失的顶层
         run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
@@ -133,7 +128,7 @@ jobs:
         run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
-        # 这一步保持上次的修改，因为它正确地为 cargo 设置了链接器名称
+        # 保留 LoongArch 的环境变量注入，作为健壮性保障
         run: |
           LINKER_ENV=""
           if [ "${{ matrix.arch }}" == "loongarch64" ]; then
@@ -150,73 +145,24 @@ jobs:
             tail -f /dev/null
 
       - name: Build
-        # 最终解决方案：在执行 make 命令时，为 loongarch64 显式地预置 PATH
+        # 保留 LoongArch 的 PATH 导出方案，作为健壮性保障
+        # 同时，根据我们修正后的 Dockerfile，更新了 PATH 的具体路径
         run: |
           if [ "${{ matrix.arch }}" == "loongarch64" ]; then
-            # 对于 loongarch64，我们构造一个特殊的命令，它首先设置 PATH，然后执行 make
-            # 注意：\$PATH 中的反斜杠是必须的，以确保 $PATH 是在容器内被解析，而不是在 CI runner 的 shell 中
+            # 关键更新：路径从 /opt/toolchain/cross-tools/bin 修正为 /opt/toolchain/bin
             docker exec ${{ env.CONTAINER_NAME }} \
-              sh -c "PATH=/opt/toolchain/cross-tools/bin:\$PATH make MODE=release"
+              sh -c "PATH=/opt/toolchain/bin:\$PATH make MODE=release"
           else
-            # 对于其他架构，使用之前的简单命令
             docker exec ${{ env.CONTAINER_NAME }} make MODE=release
           fi
 
       - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
-# =========================================================================
-# ！！！一次性的诊断专用 Job ！！！
-# 这个 Job 的唯一目的就是进入 LoongArch64 容器，执行一系列检查命令，
-# 并将结果打印出来，以便我们进行最终的问题诊断。
-# =========================================================================
-  debug-loongarch-env:
-    name: Debug LoongArch Environment
-    runs-on: ubuntu-latest
-    steps:
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      - name: Pull LoongArch CI Image
-        run: docker pull ${{ env.CI_IMAGE_PREFIX }}:loongarch64_${{ env.IMAGE_VERSION }}
-
-      - name: Run Forensic Investigation inside the Container
-        # 我们将以交互模式启动容器，并连续执行一系列诊断命令
-        # continue-on-error 确保即使某个命令失败，我们也能看到所有输出
-        continue-on-error: true
-        run: |
-          docker run --rm --name debug-container \
-            --entrypoint sh \
-            ${{ env.CI_IMAGE_PREFIX }}:loongarch64_${{ env.IMAGE_VERSION }} \
-            -c "
-              echo '================================================================='
-              echo '=== 1. 验证工具链目录内容 (Verifying toolchain directory contents) ==='
-              echo '================================================================='
-              ls -lA /opt/toolchain/cross-tools/bin/
-              
-              echo
-              echo '================================================================='
-              echo '=== 2. 验证默认的 PATH 环境变量 (Verifying default PATH variable) ==='
-              echo '================================================================='
-              echo \$PATH
-              
-              echo
-              echo '================================================================='
-              echo '=== 3. 尝试用绝对路径直接执行链接器 (Testing direct execution) ==='
-              echo '================================================================='
-              /opt/toolchain/cross-tools/bin/loongarch64-clfs-linux-gnu-gcc --version
-              
-              echo
-              echo '================================================================='
-              echo '=== 4. 尝试通过我们之前的方法执行 (Testing execution via modified PATH) ==='
-              echo '================================================================='
-              PATH=/opt/toolchain/cross-tools/bin:\$PATH loongarch64-clfs-linux-gnu-gcc --version
-            "
 
   systemtest:
     name: systemtest
-    runs-on: ubuntu-latest # ubuntu-22.04 也可以，但 latest 通常就足够了
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -237,7 +183,6 @@ jobs:
         run: docker pull ${{ env.CI_IMAGE_PREFIX }}:${{ matrix.arch }}_${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
-        # 对于需要特殊权限的系统测试，可以添加 --privileged 标志
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} --privileged \
             -v ${{ github.workspace }}:/workdir \
@@ -255,7 +200,6 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   license-checker:
-    # 这个 job 很简单，不需要复杂的 Docker 环境，保持原样以实现快速执行
     name: license-checker
     runs-on: ubuntu-latest
     steps:
