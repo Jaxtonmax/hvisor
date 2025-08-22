@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 此工作流已更新为正确的缓存模式：每个作业独立管理自己的容器缓存。
+# 最终版：集成分层镜像、动态容器选择，并包含明确的缓存命中验证步骤
 
 name: CI
 
@@ -15,25 +15,36 @@ on:
   workflow_dispatch:
 
 env:
-  CI_IMAGE: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
+  # 定义镜像仓库和标签，方便统一管理
+  IMAGE_REGISTRY: ghcr.io/jaxtonmax
+  BASE_IMAGE_TAG: wzm_2.0.1
+  ARCH_IMAGE_TAG: wzm_2.0.1 # 假设新镜像也使用此标签
+  RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
+  RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
 
 jobs:
   # =========================================================================
-  # 移除了 setup-ci-environment 作业
-  # 将缓存逻辑直接集成到每个需要容器的作业中
+  # Linter 作业：仅需要基础环境，因此使用 base 镜像
   # =========================================================================
   linter:
     name: linter
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
-    env:
-      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
-      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
+    container: ${{ env.IMAGE_REGISTRY }}/hvisor-ci-base:${{ env.BASE_IMAGE_TAG }}
     steps:
-      # 在每个作业的开始，都执行缓存恢复操作
-      - name: Restore Docker Layer Cache
+      # 步骤 1: 尝试从缓存恢复镜像，并为这个步骤设置 ID
+      - name: Restore Docker Image Cache
+        id: docker_cache # <-- 添加 ID 以便后续步骤引用
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      # 步骤 2: 【新增】验证缓存是否命中
+      - name: Verify Cache Hit
+        run: |
+          if [ "${{ steps.docker_cache.outputs.cache-hit }}" = "true" ]; then
+            echo "✅✅✅ Linter: Cache hit! Image was successfully restored from cache."
+          else
+            echo "⚠️⚠️⚠️ Linter: Cache miss. Image will be pulled from the registry."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -42,13 +53,13 @@ jobs:
       - name: Format Check
         run: make fmt-test
 
+  # =========================================================================
+  # Unittest 作业：根据 matrix.arch 动态选择对应的架构镜像
+  # =========================================================================
   unittest:
-    name: unittest
+    name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
-    env:
-      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
-      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
+    container: ${{ env.IMAGE_REGISTRY }}/hvisor-ci-${{ matrix.arch }}:${{ env.ARCH_IMAGE_TAG }}
     strategy:
       fail-fast: false
       matrix:
@@ -62,9 +73,18 @@ jobs:
           - arch: riscv64
             board: "qemu-aia"
     steps:
-      - name: Restore Docker Layer Cache
+      - name: Restore Docker Image Cache
+        id: docker_cache # <-- 添加 ID
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      - name: Verify Cache Hit
+        run: |
+          if [ "${{ steps.docker_cache.outputs.cache-hit }}" = "true" ]; then
+            echo "✅✅✅ Unittest (${{ matrix.arch }}): Cache hit! Image was successfully restored from cache."
+          else
+            echo "⚠️⚠️⚠️ Unittest (${{ matrix.arch }}): Cache miss. Image will be pulled from the registry."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -77,13 +97,13 @@ jobs:
       - name: Unit Test
         run: make test
 
+  # =========================================================================
+  # Build 作业：同样根据 matrix.arch 动态选择镜像
+  # =========================================================================
   build:
-    name: build
+    name: build (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
-    env:
-      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
-      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
+    container: ${{ env.IMAGE_REGISTRY }}/hvisor-ci-${{ matrix.arch }}:${{ env.ARCH_IMAGE_TAG }}
     strategy:
       fail-fast: false
       matrix:
@@ -109,9 +129,18 @@ jobs:
           - arch: loongarch64
             board: "ls3a5000"
     steps:
-      - name: Restore Docker Layer Cache
+      - name: Restore Docker Image Cache
+        id: docker_cache # <-- 添加 ID
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      - name: Verify Cache Hit
+        run: |
+          if [ "${{ steps.docker_cache.outputs.cache-hit }}" = "true" ]; then
+            echo "✅✅✅ Build (${{ matrix.arch }}): Cache hit! Image was successfully restored from cache."
+          else
+            echo "⚠️⚠️⚠️ Build (${{ matrix.arch }}): Cache miss. Image will be pulled from the registry."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -124,15 +153,15 @@ jobs:
       - name: Build
         run: make
 
+  # =========================================================================
+  # Systemtest 作业：动态选择镜像
+  # =========================================================================
   systemtest:
-    name: systemtest
+    name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci:wzm_1.0.2
+      image: ${{ env.IMAGE_REGISTRY }}/hvisor-ci-${{ matrix.arch }}:${{ env.ARCH_IMAGE_TAG }}
       options: --cap-add=SYS_ADMIN --privileged
-    env:
-      RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
-      RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
     strategy:
       fail-fast: false
       matrix:
@@ -142,9 +171,18 @@ jobs:
           - arch: riscv64
             board: "qemu-plic"
     steps:
-      - name: Restore Docker Layer Cache
+      - name: Restore Docker Image Cache
+        id: docker_cache # <-- 添加 ID
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      - name: Verify Cache Hit
+        run: |
+          if [ "${{ steps.docker_cache.outputs.cache-hit }}" = "true" ]; then
+            echo "✅✅✅ Systemtest (${{ matrix.arch }}): Cache hit! Image was successfully restored from cache."
+          else
+            echo "⚠️⚠️⚠️ Systemtest (${{ matrix.arch }}): Cache miss. Image will be pulled from the registry."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -157,7 +195,9 @@ jobs:
       - name: Run System Test
         run: make stest
 
-  # 此作业很轻量，不需要容器，所以不需要缓存
+  # =========================================================================
+  # License-checker 作业：无需容器，保持不变
+  # =========================================================================
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
