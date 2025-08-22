@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 优化版工作流：采用分层镜像、硬编码镜像路径并包含缓存命中测试
+# 最终优化版：使用指定的、独立的架构镜像，并包含缓存命中测试
 
 name: CI
 
@@ -14,23 +14,35 @@ on:
       - dev
   workflow_dispatch:
 
+# 全局环境变量，移除了镜像相关的变量
 env:
-  # 全局环境变量，仅保留非镜像相关的配置
   RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
   RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
 
 jobs:
   # =========================================================================
-  # Linter 作业：仅需要基础环境，因此使用 base 镜像
+  # Linter 作业：使用指定版本的 base 镜像
   # =========================================================================
   linter:
     name: linter
     runs-on: ubuntu-latest
     container: ghcr.io/jaxtonmax/hvisor-ci-base:wzm_2.0.1
     steps:
+      # 步骤 1: 恢复 Docker 镜像缓存，并为步骤设置 id 以便引用其输出
       - name: Restore Docker Image Cache
+        id: cache-docker-image
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      # 步骤 2: 新增 - 检查并报告缓存是否命中
+      - name: Check Cache Hit Status
+        run: |
+          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
+          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Docker image cache was successfully restored."
+          else
+            echo "ℹ️ Docker image cache not found. A full image pull is expected."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -40,28 +52,45 @@ jobs:
         run: make fmt-test
 
   # =========================================================================
-  # Unittest 作业：根据 matrix.arch 动态选择对应的架构镜像
+  # Unittest 作业：根据 matrix 动态选择镜像，并指定每个架构的正确标签
   # =========================================================================
   unittest:
     name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_2.0.1
+    # 动态拼接镜像名称和从 matrix 中获取的特定标签
+    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ matrix.image_tag }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # aarch64 使用 2.0.2 标签
           - arch: aarch64
             board: "qemu-gicv3"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "qemu-gicv2"
+            image_tag: "2.0.2"
+          # riscv64 使用 wzm_2.0.2 标签
           - arch: riscv64
             board: "qemu-plic"
+            image_tag: "wzm_2.0.2"
           - arch: riscv64
             board: "qemu-aia"
+            image_tag: "wzm_2.0.2"
     steps:
       - name: Restore Docker Image Cache
+        id: cache-docker-image
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      - name: Check Cache Hit Status
+        run: |
+          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
+          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Docker image cache was successfully restored."
+          else
+            echo "ℹ️ Docker image cache not found. A full image pull is expected."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -75,40 +104,60 @@ jobs:
         run: make test
 
   # =========================================================================
-  # Build 作业：同样根据 matrix.arch 动态选择镜像
+  # Build 作业：同样根据 matrix 动态选择镜像和标签
   # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_2.0.1
+    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ matrix.image_tag }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "qemu-gicv2"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "zcu102"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "imx8mp"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "rk3568"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "rk3588"
+            image_tag: "2.0.2"
           - arch: aarch64
             board: "ok6254-c"
+            image_tag: "2.0.2"
           - arch: riscv64
             board: "qemu-aia"
+            image_tag: "wzm_2.0.2"
           - arch: riscv64
             board: "qemu-plic"
+            image_tag: "wzm_2.0.2"
           - arch: loongarch64
             board: "ls3a5000"
+            image_tag: "2.0.2"
     steps:
       - name: Restore Docker Image Cache
+        id: cache-docker-image
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      - name: Check Cache Hit Status
+        run: |
+          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
+          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Docker image cache was successfully restored."
+          else
+            echo "ℹ️ Docker image cache not found. A full image pull is expected."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -122,13 +171,13 @@ jobs:
         run: make
 
   # =========================================================================
-  # Systemtest 作业：动态选择镜像
+  # Systemtest 作业：动态选择镜像和标签
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_2.0.1
+      image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ matrix.image_tag }}
       options: --cap-add=SYS_ADMIN --privileged
     strategy:
       fail-fast: false
@@ -136,12 +185,24 @@ jobs:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
+            image_tag: "2.0.2"
           - arch: riscv64
             board: "qemu-plic"
+            image_tag: "wzm_2.0.2"
     steps:
       - name: Restore Docker Image Cache
+        id: cache-docker-image
         uses: satackey/action-docker-layer-caching@v0.0.11
         continue-on-error: true
+
+      - name: Check Cache Hit Status
+        run: |
+          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
+          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Docker image cache was successfully restored."
+          else
+            echo "ℹ️ Docker image cache not found. A full image pull is expected."
+          fi
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -155,7 +216,7 @@ jobs:
         run: make stest
 
   # =========================================================================
-  # License-checker 作业：无需容器，保持不变
+  # License-checker 作业：无需容器和缓存，保持不变
   # =========================================================================
   license-checker:
     name: license-checker
@@ -167,30 +228,3 @@ jobs:
         run: |
           set -x
           ./tools/license_checker.sh
-
-  # =========================================================================
-  # Cache Test 作业：显式验证缓存是否命中
-  # =========================================================================
-  cache-test:
-    name: Verify Cache Hit
-    # 此作业依赖于 linter 作业，确保在 linter 尝试保存缓存后再运行
-    needs: linter
-    runs-on: ubuntu-latest
-    # 我们使用其中一个架构镜像来模拟真实场景的缓存测试
-    container: ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_2.0.1
-    steps:
-      - name: Restore Docker Image Cache
-        id: cache_restore_step # 赋予步骤 ID 以便引用其输出
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      - name: Report Cache Hit Status
-        run: |
-          echo "=================================================="
-          echo "Cache Hit Status: ${{ steps.cache_restore_step.outputs.cache-hit }}"
-          echo "=================================================="
-          if [[ "${{ steps.cache_restore_step.outputs.cache-hit }}" == "true" ]]; then
-            echo "✅ SUCCESS: The Docker image was successfully restored from the cache."
-          else
-            echo "ℹ️ INFO: The Docker image was not found in the cache. This is expected on the first run of a new branch or after a manual cache clear."
-          fi
