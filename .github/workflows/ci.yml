@@ -213,7 +213,23 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Run System Test
-        run: make stest
+        run: |
+          # 关键修复：重建 PATH 环境变量，将系统路径放在最前面
+          # 这确保了 'gcc' 解析为 /usr/bin/gcc，解决了 GLIBC 冲突
+          # 同时交叉编译器 'aarch64-none-linux-gnu-gcc' 仍然可以在 /opt/toolchain/bin 中被找到
+          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
+          
+          echo "--- Verifying GCC paths ---"
+          echo "Native GCC used by system:"
+          which gcc
+          gcc --version
+          
+          echo "Cross-compiler used for kernel modules:"
+          which ${{ matrix.cross_compile }}gcc
+          ${{ matrix.cross_compile }}gcc --version
+          echo "---------------------------"
+
+          make stest
 
   # =========================================================================
   # License-checker 作业：无需容器和缓存，保持不变
