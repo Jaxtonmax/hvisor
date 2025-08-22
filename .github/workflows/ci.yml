@@ -185,50 +185,79 @@ jobs:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "2.0.2"
+            image_tag: "2.0.2" # 请确保这是您正确的标签
+            cross_compile_prefix: "aarch64-none-linux-gnu-"
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "wzm_2.0.2"
+            image_tag: "wzm_2.0.2" # 请确保这是您正确的标签
+            cross_compile_prefix: "riscv64-unknown-linux-gnu-"
+            
     steps:
-      - name: Restore Docker Image Cache
-        id: cache-docker-image
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      - name: Check Cache Hit Status
-        run: |
-          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
-          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Docker image cache was successfully restored."
-          else
-            echo "ℹ️ Docker image cache not found. A full image pull is expected."
-          fi
-
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive' # 建议在这里直接处理子模块
+
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
+
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+
+      # =========================================================================
+      # 新增的诊断步骤
+      # =========================================================================
+      - name: Pre-Build Environment Diagnostics
+        id: diagnostics
+        run: |
+          echo "============================================================"
+          echo "               ENVIRONMENT FORENSICS REPORT"
+          echo "============================================================"
+          
+          echo -e "\n--- 1. Operating System & GLIBC Version ---"
+          echo "OS Details:"
+          cat /etc/os-release
+          echo "GLIBC Version:"
+          ldd --version | head -n1
+
+          echo -e "\n--- 2. Current PATH Variable ---"
+          echo "$PATH"
+
+          echo -e "\n--- 3. Resolving Compiler Locations ---"
+          echo -n "Location of 'gcc': "
+          which gcc
+          echo -n "Location of cross-compiler '${{ matrix.cross_compile_prefix }}gcc': "
+          which ${{ matrix.cross_compile_prefix }}gcc
+
+          echo -e "\n--- 4. Analysis of the NATIVE 'gcc' that will be used ---"
+          NATIVE_GCC_PATH=$(which gcc)
+          if [ -f "$NATIVE_GCC_PATH" ]; then
+            echo "Version of '$NATIVE_GCC_PATH':"
+            $NATIVE_GCC_PATH --version
+            echo "GLIBC dependencies of this GCC:"
+            ldd $NATIVE_GCC_PATH | grep 'libc.so.6' || echo "No direct GLIBC dependency found."
+          else
+            echo "Native 'gcc' not found in PATH!"
+          fi
+          
+          echo -e "\n--- 5. Analysis of the CUSTOM TOOLCHAIN 'gcc' (if it exists) ---"
+          CUSTOM_GCC_PATH="/opt/toolchain/bin/gcc"
+          if [ -f "$CUSTOM_GCC_PATH" ]; then
+            echo "Version of '$CUSTOM_GCC_PATH':"
+            $CUSTOM_GCC_PATH --version
+            echo "GLIBC dependencies of this GCC:"
+            ldd $CUSTOM_GCC_PATH | grep 'libc.so.6' || echo "No direct GLIBC dependency found."
+          else
+            echo "Custom 'gcc' not found at $CUSTOM_GCC_PATH."
+          fi
+          
+          echo "============================================================"
+          
       - name: Run System Test
         run: |
-          # 关键修复：重建 PATH 环境变量，将系统路径放在最前面
-          # 这确保了 'gcc' 解析为 /usr/bin/gcc，解决了 GLIBC 冲突
-          # 同时交叉编译器 'aarch64-none-linux-gnu-gcc' 仍然可以在 /opt/toolchain/bin 中被找到
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
-          
-          echo "--- Verifying GCC paths ---"
-          echo "Native GCC used by system:"
-          which gcc
-          gcc --version
-          
-          echo "Cross-compiler used for kernel modules:"
-          which ${{ matrix.cross_compile }}gcc
-          ${{ matrix.cross_compile }}gcc --version
-          echo "---------------------------"
-
+          # 我们暂时不修改这里的命令，先看诊断日志的结果
           make stest
 
   # =========================================================================
