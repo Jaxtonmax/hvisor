@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 最终优化版：包含作业依赖顺序和编译产物缓存
+# 最终优化版：所有作业并行执行，并包含高效的编译产物缓存
 
 name: CI
 
@@ -16,7 +16,7 @@ on:
 
 jobs:
   # =========================================================================
-  # 1. Linter 作业：第一道关卡，最先运行
+  # Linter 作业 (并行)
   # =========================================================================
   linter:
     name: linter
@@ -25,7 +25,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        # 优化：如果项目使用子模块，一次性检出
         with:
           submodules: 'recursive'
       - name: Disable rustup auto update
@@ -34,85 +33,30 @@ jobs:
         run: make fmt-test
 
   # =========================================================================
-  # 2. Build & Unittest 作业：在 Linter 成功后并行运行
+  # Unittest 作业 (并行)
   # =========================================================================
-  build_and_unittest:
-    name: ${{ matrix.type }} (${{ matrix.arch }} on ${{ matrix.board }})
-    # 依赖 linter 作业成功
-    needs: linter
+  unittest:
+    name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
     container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
     strategy:
       fail-fast: false
       matrix:
-        # 我们将 build 和 unittest 合并到一个 matrix 中以减少重复定义
-        # Build Jobs
         include:
-          - type: build
-            arch: aarch64
+          - arch: aarch64
             board: "qemu-gicv3"
-            command: "make"
-          - type: build
-            arch: aarch64
+          - arch: aarch64
             board: "qemu-gicv2"
-            command: "make"
-          - type: build
-            arch: aarch64
-            board: "zcu102"
-            command: "make"
-          - type: build
-            arch: aarch64
-            board: "imx8mp"
-            command: "make"
-          - type: build
-            arch: aarch64
-            board: "rk3568"
-            command: "make"
-          - type: build
-            arch: aarch64
-            board: "rk3588"
-            command: "make"
-          - type: build
-            arch: aarch64
-            board: "ok6254-c"
-            command: "make"
-          - type: build
-            arch: riscv64
-            board: "qemu-aia"
-            command: "make"
-          - type: build
-            arch: riscv64
+          - arch: riscv64
             board: "qemu-plic"
-            command: "make"
-          - type: build
-            arch: loongarch64
-            board: "ls3a5000"
-            command: "make"
-        # Unittest Jobs
-          - type: unittest
-            arch: aarch64
-            board: "qemu-gicv3"
-            command: "make test"
-          - type: unittest
-            arch: aarch64
-            board: "qemu-gicv2"
-            command: "make test"
-          - type: unittest
-            arch: riscv64
-            board: "qemu-plic"
-            command: "make test"
-          - type: unittest
-            arch: riscv64
+          - arch: riscv64
             board: "qemu-aia"
-            command: "make test"
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      
-      # 新增：编译缓存步骤
+
       - name: Cache Cargo and Target Directories
         id: cache-cargo
         uses: actions/cache@v4
@@ -127,33 +71,96 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
 
-      # 新增：检查缓存是否命中
       - name: Check Cache Hit Status
         run: |
           if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Cargo/target cache was successfully restored."
+            echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
           else
-            echo "ℹ️ Cargo/target cache not found. A full build is expected."
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
           fi
 
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-        
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          
-      - name: Run ${{ matrix.type }}
-        run: ${{ matrix.command }}
+      - name: Unit Test
+        run: make test
 
   # =========================================================================
-  # 3. Systemtest 作业：在所有 Build 和 Unittest 成功后运行
+  # Build 作业 (并行)
+  # =========================================================================
+  build:
+    name: build (${{ matrix.arch }} on ${{ matrix.board }})
+    runs-on: ubuntu-latest
+    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            board: "qemu-gicv3"
+          - arch: aarch64
+            board: "qemu-gicv2"
+          - arch: aarch64
+            board: "zcu102"
+          - arch: aarch64
+            board: "imx8mp"
+          - arch: aarch64
+            board: "rk3568"
+          - arch: aarch64
+            board: "rk3588"
+          - arch: aarch64
+            board: "ok6254-c"
+          - arch: riscv64
+            board: "qemu-aia"
+          - arch: riscv64
+            board: "qemu-plic"
+          - arch: loongarch64
+            board: "ls3a5000"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Cache Cargo and Target Directories
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
+
+      - name: Check Cache Hit Status
+        run: |
+          if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
+          else
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
+          fi
+
+      - name: Disable rustup auto update
+        run: rustup set auto-self-update disable
+      - name: Set up environment variables
+        run: |
+          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+      - name: Build
+        run: make
+
+  # =========================================================================
+  # Systemtest 作业 (并行)
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
-    # 依赖 build_and_unittest 作业成功
-    needs: build_and_unittest
     runs-on: ubuntu-22.04
     container: 
       image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
@@ -171,7 +178,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      
+
       - name: Cache Cargo and Target Directories
         id: cache-cargo
         uses: actions/cache@v4
@@ -189,24 +196,22 @@ jobs:
       - name: Check Cache Hit Status
         run: |
           if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Cargo/target cache was successfully restored."
+            echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
           else
-            echo "ℹ️ Cargo/target cache not found. A full build is expected."
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
           fi
 
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-        
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-          
       - name: Run System Test
         run: make stest
 
   # =========================================================================
-  # 4. License-checker 作业：可以独立并行运行
+  # License-checker 作业 (并行)
   # =========================================================================
   license-checker:
     name: license-checker
