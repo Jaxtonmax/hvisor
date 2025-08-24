@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 最终版本：基于 Ubuntu 22.04 的新镜像，并移除了不兼容的缓存机制
+# 最终优化版：包含作业依赖顺序和编译产物缓存
 
 name: CI
 
@@ -16,7 +16,7 @@ on:
 
 jobs:
   # =========================================================================
-  # Linter 作业：使用新的 base 镜像ci
+  # 1. Linter 作业：第一道关卡，最先运行
   # =========================================================================
   linter:
     name: linter
@@ -25,90 +25,135 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        # 优化：如果项目使用子模块，一次性检出
+        with:
+          submodules: 'recursive'
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
       - name: Format Check
         run: make fmt-test
 
   # =========================================================================
-  # Unittest 作业：使用新的架构镜像
+  # 2. Build & Unittest 作业：在 Linter 成功后并行运行
   # =========================================================================
-  unittest:
-    name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
+  build_and_unittest:
+    name: ${{ matrix.type }} (${{ matrix.arch }} on ${{ matrix.board }})
+    # 依赖 linter 作业成功
+    needs: linter
     runs-on: ubuntu-latest
     container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
     strategy:
       fail-fast: false
       matrix:
+        # 我们将 build 和 unittest 合并到一个 matrix 中以减少重复定义
+        # Build Jobs
         include:
-          - arch: aarch64
+          - type: build
+            arch: aarch64
             board: "qemu-gicv3"
-          - arch: aarch64
+            command: "make"
+          - type: build
+            arch: aarch64
             board: "qemu-gicv2"
-          - arch: riscv64
-            board: "qemu-plic"
-          - arch: riscv64
-            board: "qemu-aia"
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-      - name: Disable rustup auto update
-        run: rustup set auto-self-update disable
-      - name: Set up environment variables
-        run: |
-          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-      - name: Unit Test
-        run: make test
-
-  # =========================================================================
-  # Build 作业：使用新的架构镜像
-  # =========================================================================
-  build:
-    name: build (${{ matrix.arch }} on ${{ matrix.board }})
-    runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64
-            board: "qemu-gicv3"
-          - arch: aarch64
-            board: "qemu-gicv2"
-          - arch: aarch64
+            command: "make"
+          - type: build
+            arch: aarch64
             board: "zcu102"
-          - arch: aarch64
+            command: "make"
+          - type: build
+            arch: aarch64
             board: "imx8mp"
-          - arch: aarch64
+            command: "make"
+          - type: build
+            arch: aarch64
             board: "rk3568"
-          - arch: aarch64
+            command: "make"
+          - type: build
+            arch: aarch64
             board: "rk3588"
-          - arch: aarch64
+            command: "make"
+          - type: build
+            arch: aarch64
             board: "ok6254-c"
-          - arch: riscv64
+            command: "make"
+          - type: build
+            arch: riscv64
             board: "qemu-aia"
-          - arch: riscv64
+            command: "make"
+          - type: build
+            arch: riscv64
             board: "qemu-plic"
-          - arch: loongarch64
+            command: "make"
+          - type: build
+            arch: loongarch64
             board: "ls3a5000"
+            command: "make"
+        # Unittest Jobs
+          - type: unittest
+            arch: aarch64
+            board: "qemu-gicv3"
+            command: "make test"
+          - type: unittest
+            arch: aarch64
+            board: "qemu-gicv2"
+            command: "make test"
+          - type: unittest
+            arch: riscv64
+            board: "qemu-plic"
+            command: "make test"
+          - type: unittest
+            arch: riscv64
+            board: "qemu-aia"
+            command: "make test"
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      
+      # 新增：编译缓存步骤
+      - name: Cache Cargo and Target Directories
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
+
+      # 新增：检查缓存是否命中
+      - name: Check Cache Hit Status
+        run: |
+          if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Cargo/target cache was successfully restored."
+          else
+            echo "ℹ️ Cargo/target cache not found. A full build is expected."
+          fi
+
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
+        
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-      - name: Build
-        run: make
+          
+      - name: Run ${{ matrix.type }}
+        run: ${{ matrix.command }}
 
   # =========================================================================
-  # Systemtest 作业：使用新的架构镜像
+  # 3. Systemtest 作业：在所有 Build 和 Unittest 成功后运行
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
+    # 依赖 build_and_unittest 作业成功
+    needs: build_and_unittest
     runs-on: ubuntu-22.04
     container: 
       image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
@@ -124,17 +169,44 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      
+      - name: Cache Cargo and Target Directories
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
+
+      - name: Check Cache Hit Status
+        run: |
+          if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Cargo/target cache was successfully restored."
+          else
+            echo "ℹ️ Cargo/target cache not found. A full build is expected."
+          fi
+
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
+        
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          
       - name: Run System Test
         run: make stest
 
   # =========================================================================
-  # License-checker 作业：无需容器，保持不变
+  # 4. License-checker 作业：可以独立并行运行
   # =========================================================================
   license-checker:
     name: license-checker
