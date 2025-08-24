@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 最终优化版：使用指定的、独立的架构镜像，并包含缓存命中测试
+# 最终版本：基于 Ubuntu 22.04 的新镜像，并移除了不兼容的缓存机制
 
 name: CI
 
@@ -14,36 +14,15 @@ on:
       - dev
   workflow_dispatch:
 
-# 全局环境变量，移除了镜像相关的变量
-env:
-  RUSTUP_DIST_SERVER: "https://static.rust-lang.org"
-  RUSTUP_UPDATE_ROOT: "https://static.rust-lang.org/rustup"
-
 jobs:
   # =========================================================================
-  # Linter 作业：使用指定版本的 base 镜像
+  # Linter 作业：使用新的 base 镜像
   # =========================================================================
   linter:
     name: linter
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-base:wzm_2.0.1
+    container: ghcr.io/jaxtonmax/hvisor-ci-base:wzm_3.0.0
     steps:
-      # 步骤 1: 恢复 Docker 镜像缓存，并为步骤设置 id 以便引用其输出
-      - name: Restore Docker Image Cache
-        id: cache-docker-image
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      # 步骤 2: 新增 - 检查并报告缓存是否命中
-      - name: Check Cache Hit Status
-        run: |
-          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
-          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Docker image cache was successfully restored."
-          else
-            echo "ℹ️ Docker image cache not found. A full image pull is expected."
-          fi
-
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -52,46 +31,25 @@ jobs:
         run: make fmt-test
 
   # =========================================================================
-  # Unittest 作业：根据 matrix 动态选择镜像，并指定每个架构的正确标签
+  # Unittest 作业：使用新的架构镜像
   # =========================================================================
   unittest:
     name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    # 动态拼接镜像名称和从 matrix 中获取的特定标签
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ matrix.image_tag }}
+    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
     strategy:
       fail-fast: false
       matrix:
         include:
-          # aarch64 使用 2.0.2 标签
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "qemu-gicv2"
-            image_tag: "2.0.2"
-          # riscv64 使用 wzm_2.0.2 标签
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "wzm_2.0.2"
           - arch: riscv64
             board: "qemu-aia"
-            image_tag: "wzm_2.0.2"
     steps:
-      - name: Restore Docker Image Cache
-        id: cache-docker-image
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      - name: Check Cache Hit Status
-        run: |
-          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
-          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Docker image cache was successfully restored."
-          else
-            echo "ℹ️ Docker image cache not found. A full image pull is expected."
-          fi
-
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -104,61 +62,37 @@ jobs:
         run: make test
 
   # =========================================================================
-  # Build 作业：同样根据 matrix 动态选择镜像和标签
+  # Build 作业：使用新的架构镜像
   # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ matrix.image_tag }}
+    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "qemu-gicv2"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "zcu102"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "imx8mp"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "rk3568"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "rk3588"
-            image_tag: "2.0.2"
           - arch: aarch64
             board: "ok6254-c"
-            image_tag: "2.0.2"
           - arch: riscv64
             board: "qemu-aia"
-            image_tag: "wzm_2.0.2"
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "wzm_2.0.2"
           - arch: loongarch64
             board: "ls3a5000"
-            image_tag: "2.0.2"
     steps:
-      - name: Restore Docker Image Cache
-        id: cache-docker-image
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
-
-      - name: Check Cache Hit Status
-        run: |
-          echo "Cache hit status: ${{ steps.cache-docker-image.outputs.cache-hit }}"
-          if [ "${{ steps.cache-docker-image.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Docker image cache was successfully restored."
-          else
-            echo "ℹ️ Docker image cache not found. A full image pull is expected."
-          fi
-
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Disable rustup auto update
@@ -171,13 +105,13 @@ jobs:
         run: make
 
   # =========================================================================
-  # Systemtest 作业：动态选择镜像和标签
+  # Systemtest 作业：使用新的架构镜像
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-22.04
     container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ matrix.image_tag }}
+      image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
       options: --cap-add=SYS_ADMIN --privileged
     strategy:
       fail-fast: false
@@ -185,83 +119,22 @@ jobs:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
-            image_tag: "2.0.2" # 请确保这是您正确的标签
-            cross_compile_prefix: "aarch64-none-linux-gnu-"
           - arch: riscv64
             board: "qemu-plic"
-            image_tag: "wzm_2.0.2" # 请确保这是您正确的标签
-            cross_compile_prefix: "riscv64-unknown-linux-gnu-"
-            
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          submodules: 'recursive' # 建议在这里直接处理子模块
-
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
-
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-
-      # =========================================================================
-      # 新增的诊断步骤
-      # =========================================================================
-      - name: Pre-Build Environment Diagnostics
-        id: diagnostics
-        run: |
-          echo "============================================================"
-          echo "               ENVIRONMENT FORENSICS REPORT"
-          echo "============================================================"
-          
-          echo -e "\n--- 1. Operating System & GLIBC Version ---"
-          echo "OS Details:"
-          cat /etc/os-release
-          echo "GLIBC Version:"
-          ldd --version | head -n1
-
-          echo -e "\n--- 2. Current PATH Variable ---"
-          echo "$PATH"
-
-          echo -e "\n--- 3. Resolving Compiler Locations ---"
-          echo -n "Location of 'gcc': "
-          which gcc
-          echo -n "Location of cross-compiler '${{ matrix.cross_compile_prefix }}gcc': "
-          which ${{ matrix.cross_compile_prefix }}gcc
-
-          echo -e "\n--- 4. Analysis of the NATIVE 'gcc' that will be used ---"
-          NATIVE_GCC_PATH=$(which gcc)
-          if [ -f "$NATIVE_GCC_PATH" ]; then
-            echo "Version of '$NATIVE_GCC_PATH':"
-            $NATIVE_GCC_PATH --version
-            echo "GLIBC dependencies of this GCC:"
-            ldd $NATIVE_GCC_PATH | grep 'libc.so.6' || echo "No direct GLIBC dependency found."
-          else
-            echo "Native 'gcc' not found in PATH!"
-          fi
-          
-          echo -e "\n--- 5. Analysis of the CUSTOM TOOLCHAIN 'gcc' (if it exists) ---"
-          CUSTOM_GCC_PATH="/opt/toolchain/bin/gcc"
-          if [ -f "$CUSTOM_GCC_PATH" ]; then
-            echo "Version of '$CUSTOM_GCC_PATH':"
-            $CUSTOM_GCC_PATH --version
-            echo "GLIBC dependencies of this GCC:"
-            ldd $CUSTOM_GCC_PATH | grep 'libc.so.6' || echo "No direct GLIBC dependency found."
-          else
-            echo "Custom 'gcc' not found at $CUSTOM_GCC_PATH."
-          fi
-          
-          echo "============================================================"
-          
       - name: Run System Test
-        run: |
-          # 我们暂时不修改这里的命令，先看诊断日志的结果
-          make stest
+        run: make stest
 
   # =========================================================================
-  # License-checker 作业：无需容器和缓存，保持不变
+  # License-checker 作业：无需容器，保持不变
   # =========================================================================
   license-checker:
     name: license-checker
