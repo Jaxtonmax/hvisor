@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 最终版本：所有作业并行执行，不使用任何缓存机制
+# 最终版本：所有作业并行执行，不使用任何缓存机制，并启用并行 make
 
 name: CI
 
@@ -30,7 +30,7 @@ jobs:
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
       - name: Format Check
-        run: make fmt-test
+        run: make fmt-test -j$(nproc)
 
   # =========================================================================
   # Unittest 作业 (并行)
@@ -63,7 +63,7 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Unit Test
-        run: make test
+        run: make test -j$(nproc)
 
   # =========================================================================
   # Build 作业 (并行)
@@ -108,7 +108,7 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Build
-        run: make
+        run: make -j$(nproc)
 
   # =========================================================================
   # Systemtest 作业 (并行)
@@ -139,7 +139,7 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Run System Test
-        run: make stest
+        run: make stest -j$(nproc)
 
   # =========================================================================
   # License-checker 作业 (并行)
