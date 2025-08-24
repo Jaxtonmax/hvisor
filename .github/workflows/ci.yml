@@ -62,6 +62,11 @@ jobs:
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+      
+      # 新增步骤：显式生成配置文件，解决竞态条件
+      - name: Generate Build Config
+        run: make defconfig
+
       - name: Unit Test
         run: make test -j$(nproc)
 
