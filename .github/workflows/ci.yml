@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 最终修复版：优化缓存策略以实现跨作业共享，并添加诊断步骤
+# 最终优化版：所有作业并行执行，并包含高效的编译产物缓存
 
 name: CI
 
@@ -16,7 +16,7 @@ on:
 
 jobs:
   # =========================================================================
-  # Linter 作业 (并行, 无需缓存)
+  # Linter 作业 (并行)
   # =========================================================================
   linter:
     name: linter
@@ -33,7 +33,7 @@ jobs:
         run: make fmt-test
 
   # =========================================================================
-  # Unittest 作业 (并行, 带优化缓存)
+  # Unittest 作业 (并行)
   # =========================================================================
   unittest:
     name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
@@ -57,19 +57,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      # 新增：缓存诊断步骤 1 - 验证文件并打印 Key
-      - name: Prepare Cache Key
-        id: prep-key
-        run: |
-          echo "Verifying Cargo.lock file..."
-          find . -name "Cargo.lock" -exec echo "Found: {}" \;
-          
-          CARGO_LOCK_HASH=$(sha256sum **/Cargo.lock | awk '{ print $1 }')
-          CACHE_KEY="v1-${{ runner.os }}-${{ matrix.arch }}-cargo-${CARGO_LOCK_HASH}"
-          
-          echo "Generated Cache Key: ${CACHE_KEY}"
-          echo "key=${CACHE_KEY}" >> $GITHUB_OUTPUT
-
       - name: Cache Cargo and Target Directories
         id: cache-cargo
         uses: actions/cache@v4
@@ -80,19 +67,16 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          # 优化：Key 不再包含 board，以在相同架构的不同 board 作业间共享依赖
-          key: ${{ steps.prep-key.outputs.key }}
-          # 优化：恢复键也只使用架构，以最大化命中率
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            v1-${{ runner.os }}-${{ matrix.arch }}-cargo-
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
 
-      # 新增：缓存诊断步骤 2 - 检查缓存命中结果
       - name: Check Cache Hit Status
         run: |
           if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
             echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
           else
-            echo "ℹ️ Cargo/target cache not found. A full build is expected. This is normal for the first run or after updating dependencies."
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
           fi
 
       - name: Disable rustup auto update
@@ -105,7 +89,7 @@ jobs:
         run: make test
 
   # =========================================================================
-  # Build 作业 (并行, 带优化缓存)
+  # Build 作业 (并行)
   # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
@@ -141,16 +125,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Prepare Cache Key
-        id: prep-key
-        run: |
-          echo "Verifying Cargo.lock file..."
-          find . -name "Cargo.lock" -exec echo "Found: {}" \;
-          CARGO_LOCK_HASH=$(sha256sum **/Cargo.lock | awk '{ print $1 }')
-          CACHE_KEY="v1-${{ runner.os }}-${{ matrix.arch }}-cargo-${CARGO_LOCK_HASH}"
-          echo "Generated Cache Key: ${CACHE_KEY}"
-          echo "key=${CACHE_KEY}" >> $GITHUB_OUTPUT
-
       - name: Cache Cargo and Target Directories
         id: cache-cargo
         uses: actions/cache@v4
@@ -161,16 +135,16 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ steps.prep-key.outputs.key }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            v1-${{ runner.os }}-${{ matrix.arch }}-cargo-
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
 
       - name: Check Cache Hit Status
         run: |
           if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
             echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
           else
-            echo "ℹ️ Cargo/target cache not found. A full build is expected. This is normal for the first run or after updating dependencies."
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
           fi
 
       - name: Disable rustup auto update
@@ -183,7 +157,7 @@ jobs:
         run: make
 
   # =========================================================================
-  # Systemtest 作业 (并行, 带优化缓存)
+  # Systemtest 作业 (并行)
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
@@ -205,16 +179,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Prepare Cache Key
-        id: prep-key
-        run: |
-          echo "Verifying Cargo.lock file..."
-          find . -name "Cargo.lock" -exec echo "Found: {}" \;
-          CARGO_LOCK_HASH=$(sha256sum **/Cargo.lock | awk '{ print $1 }')
-          CACHE_KEY="v1-${{ runner.os }}-${{ matrix.arch }}-cargo-${CARGO_LOCK_HASH}"
-          echo "Generated Cache Key: ${CACHE_KEY}"
-          echo "key=${CACHE_KEY}" >> $GITHUB_OUTPUT
-
       - name: Cache Cargo and Target Directories
         id: cache-cargo
         uses: actions/cache@v4
@@ -225,16 +189,16 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ steps.prep-key.outputs.key }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            v1-${{ runner.os }}-${{ matrix.arch }}-cargo-
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
 
       - name: Check Cache Hit Status
         run: |
           if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
             echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
           else
-            echo "ℹ️ Cargo/target cache not found. A full build is expected. This is normal for the first run or after updating dependencies."
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
           fi
 
       - name: Disable rustup auto update
@@ -247,7 +211,7 @@ jobs:
         run: make stest
 
   # =========================================================================
-  # License-checker 作业 (并行, 无需缓存)
+  # License-checker 作业 (并行)
   # =========================================================================
   license-checker:
     name: license-checker
