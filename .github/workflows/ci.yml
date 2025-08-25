@@ -1,14 +1,13 @@
 # =========================================================================
-# hvisor Github Actions CI (v5.0 - 最终诊断与修复版)
+# hvisor Github Actions CI (v5.1 - 最终修复版)
 #
-# - 根本原因定位: Runner 虚拟机本地磁盘空间不足，导致缓存打包失败。
-# - 核心解决方案:
-#   1. [最大化空间] 在每个作业开始时，使用 `easimon/maximize-build-space-action`
-#      清理不必要的预装软件，释放 10GB+ 的宝贵磁盘空间。
-#   2. [精准诊断] 在清理前后和关键步骤打印 `df -h` (磁盘使用情况)，
-#      让磁盘空间的变化一目了然，彻底验证问题。
-# - 隔离策略保留: 依然将 loongarch64 单独处理，因为它除了磁盘空间问题，
-#   还面临 10GB 的【缓存上传】限制，解决一个问题，再看另一个。
+# - Action 修正: 将无法访问的 easimon/maximize-build-space-action
+#   替换为当前社区维护的 ci-ros/maximize-build-space-action，以解决
+#   "repository not found" 错误。
+# - 核心策略不变:
+#   1. [最大化空间] 在每个作业开始时清理磁盘空间。
+#   2. [精准诊断] 通过 `df -h` 监控磁盘空间变化。
+#   3. [隔离问题] loongarch64 镜像因体积过大，依旧不使用缓存。
 # =========================================================================
 
 name: CI
@@ -40,7 +39,7 @@ jobs:
         run: df -h
 
       - name: 2. Maximize Build Space
-        uses: easimon/maximize-build-space-action@v10
+        uses: ci-ros/maximize-build-space-action@v1
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
@@ -97,7 +96,7 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
       - name: 2. Maximize Build Space
-        uses: easimon/maximize-build-space-action@v10
+        uses: ci-ros/maximize-build-space-action@v1
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
@@ -158,7 +157,7 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
       - name: 2. Maximize Build Space
-        uses: easimon/maximize-build-space-action@v10
+        uses: ci-ros/maximize-build-space-action@v1
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
@@ -229,7 +228,7 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
       - name: 2. Maximize Build Space
-        uses: easimon/maximize-build-space-action@v10
+        uses: ci-ros/maximize-build-space-action@v1
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
