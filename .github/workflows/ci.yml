@@ -1,13 +1,15 @@
 # =========================================================================
-# hvisor Github Actions CI (v3.3 - 简化镜像依赖与缓存策略)
+# hvisor Github Actions CI (v4.0 - 隔离问题 + 稳定缓存)
 #
-# - 核心优化: 移除对 hvisor-ci-base 镜像的直接依赖。
-# - 策略变更: linter 作业现在使用最小的架构镜像 (hvisor-ci-aarch64)，
-#   因为它已包含 base 的所有功能。
-# - 缓存效率: 减少了需要缓存的独立镜像数量，linter 和 aarch64 作业
-#   将共享同一个缓存，提高了缓存命中率。
-# - 明确预期: 此修改将使 aarch64 和 riscv64 作业的缓存生效并大幅提速。
-#   loongarch64 作业因其自身体积问题仍会较慢，但这不再影响其他作业。
+# - 核心策略: 承认 loongarch64 镜像因体积过大无法缓存，并将其隔离。
+# - 作业拆分:
+#   - 创建了一个独立的 `build-loongarch64` 作业，该作业【完全不使用】任何缓存机制。
+#     这保证了它的慢速不会影响其他作业，也不会因缓存超限而报错。
+#   - 其他所有作业 (linter, unittest, build, systemtest) 正常使用缓存。
+# - 缓存 Action 升级: (隐式) 我们将继续使用当前 action，但通过隔离策略
+#   避免了其处理超大镜像时触发的 400 错误。
+# - 明确的缓存密钥: 使用包含镜像版本的 key，确保镜像更新后缓存自动失效。
+# - 移除 base 镜像依赖: linter 作业继续使用 aarch64 镜像，策略不变。
 # =========================================================================
 
 name: CI
@@ -29,7 +31,7 @@ env:
 
 jobs:
   # =========================================================================
-  # Linter 作业 (使用 aarch64 镜像)
+  # Linter 作业 (使用缓存)
   # =========================================================================
   linter:
     name: linter
@@ -43,14 +45,11 @@ jobs:
       - name: Restore Docker Layer Cache for aarch64
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-aarch64-${{ runner.os }}
+          key: docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
 
       - name: Pull aarch64 Image (for Linter)
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
-          echo "Pulling image for linter: ${IMAGE_NAME}"
-          docker pull ${IMAGE_NAME}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
         run: |
@@ -70,7 +69,7 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Unittest 作业 (使用各自的架构镜像)
+  # Unittest 作业 (使用缓存)
   # =========================================================================
   unittest:
     name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
@@ -96,22 +95,18 @@ jobs:
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-${{ matrix.arch }}-${{ runner.os }}
+          key: docker-cache-${{ matrix.arch }}-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
 
       - name: Pull Arch Image
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
-          echo "Pulling image: ${IMAGE_NAME}"
-          docker pull ${IMAGE_NAME}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
             -w /workdir \
-            --env ARCH=${{ matrix.arch }} \
-            --env BOARD=${{ matrix.board }} \
+            --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} \
             ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
             tail -f /dev/null
 
@@ -125,7 +120,7 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Build 作业 (使用各自的架构镜像)
+  # Build 作业 (aarch64 & riscv64, 使用缓存)
   # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
@@ -152,8 +147,6 @@ jobs:
             board: "qemu-aia"
           - arch: riscv64
             board: "qemu-plic"
-          - arch: loongarch64
-            board: "ls3a5000"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -163,22 +156,18 @@ jobs:
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-${{ matrix.arch }}-${{ runner.os }}
+          key: docker-cache-${{ matrix.arch }}-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
 
       - name: Pull Arch Image
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
-          echo "Pulling image: ${IMAGE_NAME}"
-          docker pull ${IMAGE_NAME}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} \
             -v ${{ github.workspace }}:/workdir \
             -w /workdir \
-            --env ARCH=${{ matrix.arch }} \
-            --env BOARD=${{ matrix.board }} \
+            --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} \
             ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
             tail -f /dev/null
 
@@ -192,7 +181,42 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Systemtest 作业 (使用各自的架构镜像)
+  # Build 作业 (loongarch64, 【不使用缓存】)
+  # =========================================================================
+  build-loongarch64:
+    name: build (loongarch64 on ls3a5000)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Pull LoongArch Image (No Cache)
+        run: |
+          echo "INFO: Caching is disabled for this job due to image size."
+          docker pull ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }}
+
+      - name: Run Container in Background
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=loongarch64 --env BOARD=ls3a5000 \
+            ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
+      - name: Build
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+
+  # =========================================================================
+  # Systemtest 作业 (使用缓存)
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
@@ -214,14 +238,11 @@ jobs:
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-${{ matrix.arch }}-${{ runner.os }}
+          key: docker-cache-${{ matrix.arch }}-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
 
       - name: Pull Arch Image
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
-          echo "Pulling image: ${IMAGE_NAME}"
-          docker pull ${IMAGE_NAME}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}
 
       - name: Run Container in Background with Privileges
         run: |
@@ -229,8 +250,7 @@ jobs:
             --cap-add=SYS_ADMIN --privileged \
             -v ${{ github.workspace }}:/workdir \
             -w /workdir \
-            --env ARCH=${{ matrix.arch }} \
-            --env BOARD=${{ matrix.board }} \
+            --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} \
             ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
             tail -f /dev/null
 
