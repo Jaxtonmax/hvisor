@@ -1,5 +1,5 @@
 # hvisor Github Actions CI
-# 最终版本：所有作业并行执行，不使用任何缓存机制，并启用并行 make
+# 最终优化版：所有作业并行执行，并包含高效的编译产物缓存
 
 name: CI
 
@@ -30,7 +30,7 @@ jobs:
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
       - name: Format Check
-        run: make fmt-test -j$(nproc)
+        run: make fmt-test
 
   # =========================================================================
   # Unittest 作业 (并行)
@@ -56,19 +56,37 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+
+      - name: Cache Cargo and Target Directories
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
+
+      - name: Check Cache Hit Status
+        run: |
+          if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
+          else
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
+          fi
+
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
       - name: Set up environment variables
         run: |
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-      
-      # 新增步骤：显式生成配置文件，解决竞态条件
-      - name: Generate Build Config
-        run: make defconfig
-
       - name: Unit Test
-        run: make test -j$(nproc)
+        run: make test
 
   # =========================================================================
   # Build 作业 (并行)
@@ -106,6 +124,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+
+      - name: Cache Cargo and Target Directories
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
+
+      - name: Check Cache Hit Status
+        run: |
+          if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
+          else
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
+          fi
+
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
       - name: Set up environment variables
@@ -113,7 +154,7 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Build
-        run: make -j$(nproc)
+        run: make
 
   # =========================================================================
   # Systemtest 作业 (并行)
@@ -137,6 +178,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+
+      - name: Cache Cargo and Target Directories
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.board }}-cargo-
+
+      - name: Check Cache Hit Status
+        run: |
+          if [ "${{ steps.cache-cargo.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Cargo/target cache was successfully restored. Expect a much faster run."
+          else
+            echo "ℹ️ Cargo/target cache not found. A full build is expected on the first run."
+          fi
+
       - name: Disable rustup auto update
         run: rustup set auto-self-update disable
       - name: Set up environment variables
@@ -144,7 +208,7 @@ jobs:
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
       - name: Run System Test
-        run: make stest -j$(nproc)
+        run: make stest
 
   # =========================================================================
   # License-checker 作业 (并行)
