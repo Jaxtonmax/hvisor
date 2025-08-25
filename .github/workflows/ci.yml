@@ -1,8 +1,9 @@
 # =========================================================================
-# hvisor Github Actions CI (v5.2 - 最终修复版)
+# hvisor Github Actions CI (v5.3 - 终极修复版)
 #
-# - 终极修正: 使用了 maximize-build-space-action 的【官方唯一指定】继承者
-#   `apmorton/maximize-build-space-action`，彻底解决 "repository not found" 错误。
+# - 终极修正: 根据 GitHub Marketplace 的官方搜索和验证结果，使用
+#   社区广泛认可且积极维护的 `jlumbroso/free-disk-space` Action
+#   来解决 Runner 磁盘空间不足的根本问题。
 # - 核心策略不变:
 #   1. [最大化空间] 在每个作业开始时清理磁盘空间。
 #   2. [精准诊断] 通过 `df -h` 监控磁盘空间变化。
@@ -37,14 +38,14 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
 
-      - name: 2. Maximize Build Space
-        uses: apmorton/maximize-build-space-action@v8
+      - name: 2. Maximize Build Space using jlumbroso/free-disk-space
+        uses: jlumbroso/free-disk-space@main
         with:
-          root-reserve-mb: 512
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false # We keep large packages like 'docker'
           
       - name: 3. Disk Space After Cleanup
         run: df -h
@@ -94,14 +95,14 @@ jobs:
     steps:
       - name: 1. Initial Disk Space Check
         run: df -h
-      - name: 2. Maximize Build Space
-        uses: apmorton/maximize-build-space-action@v8
+      - name: 2. Maximize Build Space using jlumbroso/free-disk-space
+        uses: jlumbroso/free-disk-space@main
         with:
-          root-reserve-mb: 512
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
       - name: 3. Disk Space After Cleanup
         run: df -h
       - name: 4. Checkout Repository
@@ -155,14 +156,14 @@ jobs:
     steps:
       - name: 1. Initial Disk Space Check
         run: df -h
-      - name: 2. Maximize Build Space
-        uses: apmorton/maximize-build-space-action@v8
+      - name: 2. Maximize Build Space using jlumbroso/free-disk-space
+        uses: jlumbroso/free-disk-space@main
         with:
-          root-reserve-mb: 512
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
       - name: 3. Disk Space After Cleanup
         run: df -h
       - name: 4. Checkout Repository
@@ -226,14 +227,14 @@ jobs:
     steps:
       - name: 1. Initial Disk Space Check
         run: df -h
-      - name: 2. Maximize Build Space
-        uses: apmorton/maximize-build-space-action@v8
+      - name: 2. Maximize Build Space using jlumbroso/free-disk-space
+        uses: jlumbroso/free-disk-space@main
         with:
-          root-reserve-mb: 512
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
       - name: 3. Disk Space After Cleanup
         run: df -h
       - name: 4. Checkout Repository
