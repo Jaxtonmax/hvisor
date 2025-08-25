@@ -1,9 +1,8 @@
 # =========================================================================
-# hvisor Github Actions CI (v5.1 - 最终修复版)
+# hvisor Github Actions CI (v5.2 - 最终修复版)
 #
-# - Action 修正: 将无法访问的 easimon/maximize-build-space-action
-#   替换为当前社区维护的 ci-ros/maximize-build-space-action，以解决
-#   "repository not found" 错误。
+# - 终极修正: 使用了 maximize-build-space-action 的【官方唯一指定】继承者
+#   `apmorton/maximize-build-space-action`，彻底解决 "repository not found" 错误。
 # - 核心策略不变:
 #   1. [最大化空间] 在每个作业开始时清理磁盘空间。
 #   2. [精准诊断] 通过 `df -h` 监控磁盘空间变化。
@@ -39,7 +38,7 @@ jobs:
         run: df -h
 
       - name: 2. Maximize Build Space
-        uses: ci-ros/maximize-build-space-action@v1
+        uses: apmorton/maximize-build-space-action@v8
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
@@ -96,7 +95,7 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
       - name: 2. Maximize Build Space
-        uses: ci-ros/maximize-build-space-action@v1
+        uses: apmorton/maximize-build-space-action@v8
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
@@ -157,7 +156,7 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
       - name: 2. Maximize Build Space
-        uses: ci-ros/maximize-build-space-action@v1
+        uses: apmorton/maximize-build-space-action@v8
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
@@ -228,7 +227,7 @@ jobs:
       - name: 1. Initial Disk Space Check
         run: df -h
       - name: 2. Maximize Build Space
-        uses: ci-ros/maximize-build-space-action@v1
+        uses: apmorton/maximize-build-space-action@v8
         with:
           root-reserve-mb: 512
           swap-size-mb: 1024
