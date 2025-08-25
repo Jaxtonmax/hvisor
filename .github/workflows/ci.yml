@@ -1,5 +1,14 @@
-# hvisor Github Actions CI
-# 最终版本：所有作业并行执行，不使用任何缓存机制
+# =========================================================================
+# hvisor Github Actions CI (v3.1 - 集成缓存优化版)
+#
+# - 架构转换: 从 job.container 模式切换为在 steps 中手动管理容器生命周期，
+#   以解锁 Docker 层缓存能力。
+# - 缓存集成: 使用 satackey/action-docker-layer-caching 在每次运行时
+#   恢复和保存镜像层，大幅减少后续运行的镜像拉取时间。
+# - 缓存验证: 在 docker pull 命令前后加入了计时和日志输出，可以明确地
+#   在 Actions 日志中看到缓存是否命中 (命中时拉取时间<30秒)。
+# - 保持并行: 所有作业依然并行执行，以获得最快的 CI 反馈速度。
+# =========================================================================
 
 name: CI
 
@@ -14,31 +23,66 @@ on:
       - dev
   workflow_dispatch:
 
+env:
+  # 为所有 job 中的容器使用一个统一的名称，便于管理
+  CONTAINER_NAME: ci-container
+  # 统一管理镜像版本
+  IMAGE_VERSION: wzm_3.0.0
+
 jobs:
   # =========================================================================
-  # Linter 作业 (并行)
+  # Linter 作业 (已集成缓存)
   # =========================================================================
   linter:
     name: linter
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-base:wzm_3.0.0
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      - name: Disable rustup auto update
-        run: rustup set auto-self-update disable
-      - name: Format Check
-        run: make fmt-test
+
+      - name: Restore Docker Layer Cache
+        id: cache-restore
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
+      - name: Time and Verify Pull for Base Image
+        run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-base:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image: ${IMAGE_NAME}"
+          start_time=$(date +%s)
+          docker pull ${IMAGE_NAME}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "================================================================"
+          echo "PULL DURATION: ${duration} seconds"
+          echo "NOTE: A duration of < 30 seconds strongly indicates a cache hit."
+          echo "================================================================"
+
+      - name: Run Container in Background
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            ghcr.io/jaxtonmax/hvisor-ci-base:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
+      - name: Run Linter Tasks
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make fmt-test
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Unittest 作业 (并行)
+  # Unittest 作业 (已集成缓存)
   # =========================================================================
   unittest:
     name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
     strategy:
       fail-fast: false
       matrix:
@@ -56,22 +100,50 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      - name: Disable rustup auto update
-        run: rustup set auto-self-update disable
-      - name: Set up environment variables
+
+      - name: Restore Docker Layer Cache
+        id: cache-restore
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
+      - name: Time and Verify Pull for Arch Image
         run: |
-          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
-      - name: Unit Test
-        run: make test
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image: ${IMAGE_NAME}"
+          start_time=$(date +%s)
+          docker pull ${IMAGE_NAME}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "================================================================"
+          echo "PULL DURATION: ${duration} seconds"
+          echo "NOTE: A duration of < 30 seconds strongly indicates a cache hit."
+          echo "================================================================"
+
+      - name: Run Container in Background
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=${{ matrix.arch }} \
+            --env BOARD=${{ matrix.board }} \
+            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
+      - name: Run Unit Test
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make test
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Build 作业 (并行)
+  # Build 作业 (已集成缓存)
   # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
-    container: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
     strategy:
       fail-fast: false
       matrix:
@@ -101,24 +173,50 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      - name: Disable rustup auto update
-        run: rustup set auto-self-update disable
-      - name: Set up environment variables
+
+      - name: Restore Docker Layer Cache
+        id: cache-restore
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
+      - name: Time and Verify Pull for Arch Image
         run: |
-          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image: ${IMAGE_NAME}"
+          start_time=$(date +%s)
+          docker pull ${IMAGE_NAME}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "================================================================"
+          echo "PULL DURATION: ${duration} seconds"
+          echo "NOTE: A duration of < 30 seconds strongly indicates a cache hit."
+          echo "================================================================"
+
+      - name: Run Container in Background
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=${{ matrix.arch }} \
+            --env BOARD=${{ matrix.board }} \
+            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
       - name: Build
-        run: make
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Systemtest 作业 (并行)
+  # Systemtest 作业 (已集成缓存)
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-22.04
-    container: 
-      image: ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:wzm_3.0.0
-      options: --cap-add=SYS_ADMIN --privileged
     strategy:
       fail-fast: false
       matrix:
@@ -132,17 +230,47 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      - name: Disable rustup auto update
-        run: rustup set auto-self-update disable
-      - name: Set up environment variables
+
+      - name: Restore Docker Layer Cache
+        id: cache-restore
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
+      - name: Time and Verify Pull for Arch Image
         run: |
-          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-          echo "BOARD=${{ matrix.board }}" >> $GITHUB_ENV
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image: ${IMAGE_NAME}"
+          start_time=$(date +%s)
+          docker pull ${IMAGE_NAME}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "================================================================"
+          echo "PULL DURATION: ${duration} seconds"
+          echo "NOTE: A duration of < 30 seconds strongly indicates a cache hit."
+          echo "================================================================"
+
+      - name: Run Container in Background with Privileges
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            --cap-add=SYS_ADMIN --privileged \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=${{ matrix.arch }} \
+            --env BOARD=${{ matrix.board }} \
+            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
       - name: Run System Test
-        run: make stest
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make stest
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # License-checker 作业 (并行)
+  # License-checker 作业 (保持不变)
   # =========================================================================
   license-checker:
     name: license-checker
