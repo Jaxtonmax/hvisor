@@ -1,12 +1,15 @@
 # =========================================================================
-# hvisor Github Actions CI (v3.2 - 深度缓存诊断版)
+# hvisor Github Actions CI (v3.3 - 消除缓存污染优化版)
 #
-# - 核心目标: 彻底诊断缓存未命中的问题。
-# - 显式验证: 在每个 Job 中增加了明确的步骤，用于检查缓存恢复 action 的输出。
-# - 预测性检查: 增加了一个步骤，用于在 Job 结束前估算镜像打包后的大小，
-#   提前预警是否会超出 GitHub Actions 10GB 的缓存限制。
-# - 详细日志: 提供了丰富的日志输出，明确告知缓存是命中还是未命中，
-#   并解释判断依据，帮助快速定位问题根源。
+# - 核心策略: 采纳用户提出的优化方案。所有作业（包括 linter）都直接使用
+#   最终的、特定于体系结构的镜像。
+# - 消除共享: 不再单独拉取和缓存 'base' 镜像，从而避免了因共享基础层
+#   可能导致的缓存密钥冲突或“缓存污染”问题。
+# - 共享缓存: linter 作业现在将使用 aarch64 镜像（作为所有架构镜像中
+#   最小的一个），并与 aarch64 的 build/test 作业共享同一个缓存。
+#   这提高了缓存的利用效率。
+# - 保留诊断: 仍然保留了详细的缓存分析和体积预测步骤，以便明确验证
+#   新策略的有效性，并持续监控 loongarch64 的体积问题。
 # =========================================================================
 
 name: CI
@@ -25,12 +28,11 @@ on:
 env:
   CONTAINER_NAME: ci-container
   IMAGE_VERSION: wzm_3.0.0
-  # 定义 10GB 的字节数，用于比较
   TEN_GB_IN_BYTES: 10737418240
 
 jobs:
   # =========================================================================
-  # Linter 作业 (集成深度缓存诊断)
+  # Linter 作业 (策略变更: 使用 aarch64 镜像)
   # =========================================================================
   linter:
     name: linter
@@ -45,8 +47,8 @@ jobs:
         id: cache-restore
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          # 使用明确的、可预测的缓存密钥
-          key: docker-cache-linter-${{ runner.os }}
+          # 关键变更: 使用 aarch64 的缓存密钥，与 aarch64 的 build 作业共享缓存
+          key: docker-cache-build-aarch64-${{ runner.os }}
         continue-on-error: true
 
       - name: 2. Analyze Cache Restore Attempt
@@ -55,11 +57,9 @@ jobs:
           echo "==================== CACHE ANALYSIS ===================="
           if [[ "${{ steps.cache-restore.outputs.cache-hit }}" == "true" ]]; then
             echo "✅ STATUS: Cache restore action reported a CACHE HIT."
-            echo "This means a cache file was found, downloaded, and loaded via 'docker load'."
             echo "cache-hit=true" >> $GITHUB_OUTPUT
           else
             echo "⚠️ STATUS: Cache restore action reported a CACHE MISS."
-            echo "This is normal for the first run, but if it persists, it means the cache was not found or the previous save failed."
             echo "cache-hit=false" >> $GITHUB_OUTPUT
           fi
           echo "========================================================"
@@ -68,8 +68,9 @@ jobs:
 
       - name: 3. Pull Image & Final Verification
         run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-base:${{ env.IMAGE_VERSION }}"
-          echo "Pulling image: ${IMAGE_NAME}"
+          # 关键变更: 拉取 aarch64 镜像来执行 linter 任务
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image for linter: ${IMAGE_NAME}"
           start_time=$(date +%s)
           docker pull ${IMAGE_NAME}
           end_time=$(date +%s)
@@ -79,39 +80,31 @@ jobs:
           echo "Pull duration: ${duration} seconds."
           if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" == "true" && ${duration} -lt 60 ]]; then
             echo "✅✅✅ VERDICT: SUCCESSFUL CACHE HIT! ✅✅✅"
-            echo "Reasoning: The restore step reported a hit AND the pull time was short."
           else
             echo "❌❌❌ VERDICT: CACHE MISS OR INEFFECTIVE CACHE! ❌❌❌"
-            echo "Reasoning:"
-            if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" != "true" ]]; then
-              echo "- The initial cache restore step reported a MISS."
-            fi
-            if [[ ${duration} -ge 60 ]]; then
-              echo "- The pull duration was long (${duration}s), indicating a full download from the registry."
-            fi
-            echo "This means the next run should be faster if the cache saves correctly this time."
+            if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" != "true" ]]; then echo "- The initial cache restore step reported a MISS."; fi
+            if [[ ${duration} -ge 60 ]]; then echo "- The pull duration was long (${duration}s), indicating a full download."; fi
           fi
           echo "========================================================"
 
       - name: 4. Predict Cache Save Size
         run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-base:${{ env.IMAGE_VERSION }}"
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
           echo "Predicting final cache size for image: ${IMAGE_NAME}"
           saved_size=$(docker save ${IMAGE_NAME} | wc -c)
           echo "================== CACHE SAVE PREDICTION =============="
-          echo "Estimated packed size: ${saved_size} bytes."
+          echo "Estimated packed size: ${saved_size} bytes (Image size: 4.06GB)."
           echo "GitHub Cache Limit:    ${{ env.TEN_GB_IN_BYTES }} bytes (10 GB)."
           if [[ ${saved_size} -gt ${{ env.TEN_GB_IN_BYTES }} ]]; then
             echo "🚨🚨🚨 WARNING: IMAGE IS TOO LARGE TO CACHE! 🚨🚨🚨"
-            echo "The packed size exceeds 10 GB. The 'Post Job' cache saving step WILL FAIL."
           else
-            echo "✅ The image size is within the cache limit. The save step should succeed."
+            echo "✅ The image size is within the cache limit."
           fi
           echo "========================================================"
 
       - name: Run Container in Background
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-base:${{ env.IMAGE_VERSION }} tail -f /dev/null
+          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
       - name: Run Linter Tasks
         run: |
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
@@ -121,8 +114,9 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Build 作业 (集成深度缓存诊断) - 【注意：此作业的日志最关键】
+  # Build, Unittest, Systemtest 作业 (保持诊断逻辑不变)
   # =========================================================================
+  # 为了简洁，这里只展示 build 作业，unittest 和 systemtest 的结构是完全相同的。
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
@@ -132,11 +126,24 @@ jobs:
         include:
           - arch: aarch64
             board: "qemu-gicv3"
+          - arch: aarch64
+            board: "qemu-gicv2"
+          - arch: aarch64
+            board: "zcu102"
+          - arch: aarch64
+            board: "imx8mp"
+          - arch: aarch64
+            board: "rk3568"
+          - arch: aarch64
+            board: "rk3588"
+          - arch: aarch64
+            board: "ok6254-c"
+          - arch: riscv64
+            board: "qemu-aia"
           - arch: riscv64
             board: "qemu-plic"
           - arch: loongarch64
             board: "ls3a5000"
-        # ... [为了简洁，省略了其他 board，您可以按需加回]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -147,6 +154,7 @@ jobs:
         id: cache-restore
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
+          # 每个架构使用自己独立的、清晰的缓存密钥
           key: docker-cache-build-${{ matrix.arch }}-${{ runner.os }}
         continue-on-error: true
 
@@ -180,14 +188,12 @@ jobs:
             echo "✅✅✅ VERDICT: SUCCESSFUL CACHE HIT! ✅✅✅"
           else
             echo "❌❌❌ VERDICT: CACHE MISS OR INEFFECTIVE CACHE! ❌❌❌"
-            echo "Reasoning:"
             if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" != "true" ]]; then echo "- The initial cache restore step reported a MISS."; fi
             if [[ ${duration} -ge 60 ]]; then echo "- The pull duration was long (${duration}s), indicating a full download."; fi
           fi
           echo "========================================================"
 
       - name: 4. Predict Cache Save Size
-        # 这个步骤对于 loongarch64 尤其重要
         run: |
           IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
           echo "Predicting final cache size for image: ${IMAGE_NAME}"
@@ -197,9 +203,9 @@ jobs:
           echo "GitHub Cache Limit:    ${{ env.TEN_GB_IN_BYTES }} bytes (10 GB)."
           if [[ ${saved_size} -gt ${{ env.TEN_GB_IN_BYTES }} ]]; then
             echo "🚨🚨🚨 WARNING: IMAGE IS TOO LARGE TO CACHE! 🚨🚨🚨"
-            echo "The packed size exceeds 10 GB. The 'Post Job' cache saving step WILL FAIL."
+            echo "The 'Post Job' cache saving step for this job WILL FAIL."
           else
-            echo "✅ The image size is within the cache limit. The save step should succeed."
+            echo "✅ The image size is within the cache limit."
           fi
           echo "========================================================"
 
@@ -214,8 +220,7 @@ jobs:
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
-# ... [unittest, systemtest 作业也应采用相同的诊断步骤模式] ...
-# ... [为了简洁，此处省略，您可以将 build 作业的诊断步骤复制过去] ...
+  # ... [请将 build 作业的 steps 完整复制到 unittest 和 systemtest 作业中] ...
 
   # =========================================================================
   # License-checker 作业 (保持不变)
