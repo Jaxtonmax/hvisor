@@ -1,15 +1,14 @@
 # =========================================================================
-# hvisor Github Actions CI (v4.0 - 隔离问题 + 稳定缓存)
+# hvisor Github Actions CI (v5.0 - 最终诊断与修复版)
 #
-# - 核心策略: 承认 loongarch64 镜像因体积过大无法缓存，并将其隔离。
-# - 作业拆分:
-#   - 创建了一个独立的 `build-loongarch64` 作业，该作业【完全不使用】任何缓存机制。
-#     这保证了它的慢速不会影响其他作业，也不会因缓存超限而报错。
-#   - 其他所有作业 (linter, unittest, build, systemtest) 正常使用缓存。
-# - 缓存 Action 升级: (隐式) 我们将继续使用当前 action，但通过隔离策略
-#   避免了其处理超大镜像时触发的 400 错误。
-# - 明确的缓存密钥: 使用包含镜像版本的 key，确保镜像更新后缓存自动失效。
-# - 移除 base 镜像依赖: linter 作业继续使用 aarch64 镜像，策略不变。
+# - 根本原因定位: Runner 虚拟机本地磁盘空间不足，导致缓存打包失败。
+# - 核心解决方案:
+#   1. [最大化空间] 在每个作业开始时，使用 `easimon/maximize-build-space-action`
+#      清理不必要的预装软件，释放 10GB+ 的宝贵磁盘空间。
+#   2. [精准诊断] 在清理前后和关键步骤打印 `df -h` (磁盘使用情况)，
+#      让磁盘空间的变化一目了然，彻底验证问题。
+# - 隔离策略保留: 依然将 loongarch64 单独处理，因为它除了磁盘空间问题，
+#   还面临 10GB 的【缓存上传】限制，解决一个问题，再看另一个。
 # =========================================================================
 
 name: CI
@@ -31,45 +30,53 @@ env:
 
 jobs:
   # =========================================================================
-  # Linter 作业 (使用缓存)
+  # Linter 作业 (已集成空间最大化和诊断)
   # =========================================================================
   linter:
     name: linter
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: 1. Initial Disk Space Check
+        run: df -h
+
+      - name: 2. Maximize Build Space
+        uses: easimon/maximize-build-space-action@v10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          
+      - name: 3. Disk Space After Cleanup
+        run: df -h
+
+      - name: 4. Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
 
-      - name: Restore Docker Layer Cache for aarch64
+      - name: 5. Restore Docker Layer Cache for aarch64
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
           key: docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
 
-      - name: Pull aarch64 Image (for Linter)
+      - name: 6. Pull aarch64 Image (for Linter)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
 
-      - name: Run Container in Background
+      - name: 7. Run Container and Linter Tasks
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} \
-            tail -f /dev/null
-
-      - name: Run Linter Tasks
-        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make fmt-test
 
-      - name: Stop Container
+      - name: 8. Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Unittest 作业 (使用缓存)
+  # Unittest 作业 (已集成空间最大化和诊断)
   # =========================================================================
   unittest:
     name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
@@ -87,40 +94,40 @@ jobs:
           - arch: riscv64
             board: "qemu-aia"
     steps:
-      - name: Checkout Repository
+      - name: 1. Initial Disk Space Check
+        run: df -h
+      - name: 2. Maximize Build Space
+        uses: easimon/maximize-build-space-action@v10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+      - name: 3. Disk Space After Cleanup
+        run: df -h
+      - name: 4. Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-
-      - name: Restore Docker Layer Cache
+      - name: 5. Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
           key: docker-cache-${{ matrix.arch }}-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
-
-      - name: Pull Arch Image
+      - name: 6. Pull Arch Image
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}
-
-      - name: Run Container in Background
+      - name: 7. Run Container and Unit Test
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} \
-            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
-            tail -f /dev/null
-
-      - name: Run Unit Test
-        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make test
-
-      - name: Stop Container
+      - name: 8. Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Build 作业 (aarch64 & riscv64, 使用缓存)
+  # Build 作业 (aarch64 & riscv64, 已集成空间最大化和诊断)
   # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
@@ -148,35 +155,35 @@ jobs:
           - arch: riscv64
             board: "qemu-plic"
     steps:
-      - name: Checkout Repository
+      - name: 1. Initial Disk Space Check
+        run: df -h
+      - name: 2. Maximize Build Space
+        uses: easimon/maximize-build-space-action@v10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+      - name: 3. Disk Space After Cleanup
+        run: df -h
+      - name: 4. Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-
-      - name: Restore Docker Layer Cache
+      - name: 5. Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
           key: docker-cache-${{ matrix.arch }}-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
-
-      - name: Pull Arch Image
+      - name: 6. Pull Arch Image
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}
-
-      - name: Run Container in Background
+      - name: 7. Run Container and Build
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} \
-            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
-            tail -f /dev/null
-
-      - name: Build
-        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make
-
-      - name: Stop Container
+      - name: 8. Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
@@ -191,32 +198,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-
       - name: Pull LoongArch Image (No Cache)
         run: |
-          echo "INFO: Caching is disabled for this job due to image size."
+          echo "INFO: Caching is disabled for this job due to image size exceeding both disk space and cache upload limits."
           docker pull ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }}
-
-      - name: Run Container in Background
+      - name: Run Container and Build
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=loongarch64 --env BOARD=ls3a5000 \
-            ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }} \
-            tail -f /dev/null
-
-      - name: Build
-        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=loongarch64 --env BOARD=ls3a5000 ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make
-
       - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Systemtest 作业 (使用缓存)
+  # Systemtest 作业 (已集成空间最大化和诊断)
   # =========================================================================
   systemtest:
     name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
@@ -230,36 +226,35 @@ jobs:
           - arch: riscv64
             board: "qemu-plic"
     steps:
-      - name: Checkout Repository
+      - name: 1. Initial Disk Space Check
+        run: df -h
+      - name: 2. Maximize Build Space
+        uses: easimon/maximize-build-space-action@v10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+      - name: 3. Disk Space After Cleanup
+        run: df -h
+      - name: 4. Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-
-      - name: Restore Docker Layer Cache
+      - name: 5. Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
           key: docker-cache-${{ matrix.arch }}-${{ env.IMAGE_VERSION }}-${{ runner.os }}
         continue-on-error: true
-
-      - name: Pull Arch Image
+      - name: 6. Pull Arch Image
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}
-
-      - name: Run Container in Background with Privileges
+      - name: 7. Run Container and System Test
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} \
-            --cap-add=SYS_ADMIN --privileged \
-            -v ${{ github.workspace }}:/workdir \
-            -w /workdir \
-            --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} \
-            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
-            tail -f /dev/null
-
-      - name: Run System Test
-        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make stest
-
-      - name: Stop Container
+      - name: 8. Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
