@@ -1,15 +1,13 @@
 # =========================================================================
-# hvisor Github Actions CI (v3.3 - 消除缓存污染优化版)
+# hvisor Github Actions CI (v3.3 - 简化镜像依赖与缓存策略)
 #
-# - 核心策略: 采纳用户提出的优化方案。所有作业（包括 linter）都直接使用
-#   最终的、特定于体系结构的镜像。
-# - 消除共享: 不再单独拉取和缓存 'base' 镜像，从而避免了因共享基础层
-#   可能导致的缓存密钥冲突或“缓存污染”问题。
-# - 共享缓存: linter 作业现在将使用 aarch64 镜像（作为所有架构镜像中
-#   最小的一个），并与 aarch64 的 build/test 作业共享同一个缓存。
-#   这提高了缓存的利用效率。
-# - 保留诊断: 仍然保留了详细的缓存分析和体积预测步骤，以便明确验证
-#   新策略的有效性，并持续监控 loongarch64 的体积问题。
+# - 核心优化: 移除对 hvisor-ci-base 镜像的直接依赖。
+# - 策略变更: linter 作业现在使用最小的架构镜像 (hvisor-ci-aarch64)，
+#   因为它已包含 base 的所有功能。
+# - 缓存效率: 减少了需要缓存的独立镜像数量，linter 和 aarch64 作业
+#   将共享同一个缓存，提高了缓存命中率。
+# - 明确预期: 此修改将使 aarch64 和 riscv64 作业的缓存生效并大幅提速。
+#   loongarch64 作业因其自身体积问题仍会较慢，但这不再影响其他作业。
 # =========================================================================
 
 name: CI
@@ -28,11 +26,10 @@ on:
 env:
   CONTAINER_NAME: ci-container
   IMAGE_VERSION: wzm_3.0.0
-  TEN_GB_IN_BYTES: 10737418240
 
 jobs:
   # =========================================================================
-  # Linter 作业 (策略变更: 使用 aarch64 镜像)
+  # Linter 作业 (使用 aarch64 镜像)
   # =========================================================================
   linter:
     name: linter
@@ -43,80 +40,93 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: 1. Attempt to Restore Docker Layer Cache
-        id: cache-restore
+      - name: Restore Docker Layer Cache for aarch64
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          # 关键变更: 使用 aarch64 的缓存密钥，与 aarch64 的 build 作业共享缓存
-          key: docker-cache-build-aarch64-${{ runner.os }}
+          key: docker-cache-aarch64-${{ runner.os }}
         continue-on-error: true
 
-      - name: 2. Analyze Cache Restore Attempt
-        id: analyze-cache
+      - name: Pull aarch64 Image (for Linter)
         run: |
-          echo "==================== CACHE ANALYSIS ===================="
-          if [[ "${{ steps.cache-restore.outputs.cache-hit }}" == "true" ]]; then
-            echo "✅ STATUS: Cache restore action reported a CACHE HIT."
-            echo "cache-hit=true" >> $GITHUB_OUTPUT
-          else
-            echo "⚠️ STATUS: Cache restore action reported a CACHE MISS."
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
-          fi
-          echo "========================================================"
-          echo "Inspecting local docker images AFTER cache restore attempt:"
-          docker images
-
-      - name: 3. Pull Image & Final Verification
-        run: |
-          # 关键变更: 拉取 aarch64 镜像来执行 linter 任务
           IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
           echo "Pulling image for linter: ${IMAGE_NAME}"
-          start_time=$(date +%s)
           docker pull ${IMAGE_NAME}
-          end_time=$(date +%s)
-          duration=$((end_time - start_time))
-          
-          echo "================== FINAL VERIFICATION =================="
-          echo "Pull duration: ${duration} seconds."
-          if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" == "true" && ${duration} -lt 60 ]]; then
-            echo "✅✅✅ VERDICT: SUCCESSFUL CACHE HIT! ✅✅✅"
-          else
-            echo "❌❌❌ VERDICT: CACHE MISS OR INEFFECTIVE CACHE! ❌❌❌"
-            if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" != "true" ]]; then echo "- The initial cache restore step reported a MISS."; fi
-            if [[ ${duration} -ge 60 ]]; then echo "- The pull duration was long (${duration}s), indicating a full download."; fi
-          fi
-          echo "========================================================"
-
-      - name: 4. Predict Cache Save Size
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
-          echo "Predicting final cache size for image: ${IMAGE_NAME}"
-          saved_size=$(docker save ${IMAGE_NAME} | wc -c)
-          echo "================== CACHE SAVE PREDICTION =============="
-          echo "Estimated packed size: ${saved_size} bytes (Image size: 4.06GB)."
-          echo "GitHub Cache Limit:    ${{ env.TEN_GB_IN_BYTES }} bytes (10 GB)."
-          if [[ ${saved_size} -gt ${{ env.TEN_GB_IN_BYTES }} ]]; then
-            echo "🚨🚨🚨 WARNING: IMAGE IS TOO LARGE TO CACHE! 🚨🚨🚨"
-          else
-            echo "✅ The image size is within the cache limit."
-          fi
-          echo "========================================================"
 
       - name: Run Container in Background
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
       - name: Run Linter Tasks
         run: |
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make fmt-test
+
       - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
-  # Build, Unittest, Systemtest 作业 (保持诊断逻辑不变)
+  # Unittest 作业 (使用各自的架构镜像)
   # =========================================================================
-  # 为了简洁，这里只展示 build 作业，unittest 和 systemtest 的结构是完全相同的。
+  unittest:
+    name: unittest (${{ matrix.arch }} on ${{ matrix.board }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            board: "qemu-gicv3"
+          - arch: aarch64
+            board: "qemu-gicv2"
+          - arch: riscv64
+            board: "qemu-plic"
+          - arch: riscv64
+            board: "qemu-aia"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        with:
+          key: docker-cache-${{ matrix.arch }}-${{ runner.os }}
+        continue-on-error: true
+
+      - name: Pull Arch Image
+        run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image: ${IMAGE_NAME}"
+          docker pull ${IMAGE_NAME}
+
+      - name: Run Container in Background
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=${{ matrix.arch }} \
+            --env BOARD=${{ matrix.board }} \
+            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
+      - name: Run Unit Test
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make test
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+
+  # =========================================================================
+  # Build 作业 (使用各自的架构镜像)
+  # =========================================================================
   build:
     name: build (${{ matrix.arch }} on ${{ matrix.board }})
     runs-on: ubuntu-latest
@@ -150,77 +160,88 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: 1. Attempt to Restore Docker Layer Cache
-        id: cache-restore
+      - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          # 每个架构使用自己独立的、清晰的缓存密钥
-          key: docker-cache-build-${{ matrix.arch }}-${{ runner.os }}
+          key: docker-cache-${{ matrix.arch }}-${{ runner.os }}
         continue-on-error: true
 
-      - name: 2. Analyze Cache Restore Attempt
-        id: analyze-cache
-        run: |
-          echo "==================== CACHE ANALYSIS ===================="
-          if [[ "${{ steps.cache-restore.outputs.cache-hit }}" == "true" ]]; then
-            echo "✅ STATUS: Cache restore action reported a CACHE HIT."
-            echo "cache-hit=true" >> $GITHUB_OUTPUT
-          else
-            echo "⚠️ STATUS: Cache restore action reported a CACHE MISS."
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
-          fi
-          echo "========================================================"
-          echo "Inspecting local docker images AFTER cache restore attempt:"
-          docker images
-
-      - name: 3. Pull Image & Final Verification
+      - name: Pull Arch Image
         run: |
           IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
           echo "Pulling image: ${IMAGE_NAME}"
-          start_time=$(date +%s)
           docker pull ${IMAGE_NAME}
-          end_time=$(date +%s)
-          duration=$((end_time - start_time))
-          
-          echo "================== FINAL VERIFICATION =================="
-          echo "Pull duration: ${duration} seconds."
-          if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" == "true" && ${duration} -lt 60 ]]; then
-            echo "✅✅✅ VERDICT: SUCCESSFUL CACHE HIT! ✅✅✅"
-          else
-            echo "❌❌❌ VERDICT: CACHE MISS OR INEFFECTIVE CACHE! ❌❌❌"
-            if [[ "${{ steps.analyze-cache.outputs.cache-hit }}" != "true" ]]; then echo "- The initial cache restore step reported a MISS."; fi
-            if [[ ${duration} -ge 60 ]]; then echo "- The pull duration was long (${duration}s), indicating a full download."; fi
-          fi
-          echo "========================================================"
-
-      - name: 4. Predict Cache Save Size
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
-          echo "Predicting final cache size for image: ${IMAGE_NAME}"
-          saved_size=$(docker save ${IMAGE_NAME} | wc -c)
-          echo "================== CACHE SAVE PREDICTION =============="
-          echo "Estimated packed size: ${saved_size} bytes."
-          echo "GitHub Cache Limit:    ${{ env.TEN_GB_IN_BYTES }} bytes (10 GB)."
-          if [[ ${saved_size} -gt ${{ env.TEN_GB_IN_BYTES }} ]]; then
-            echo "🚨🚨🚨 WARNING: IMAGE IS TOO LARGE TO CACHE! 🚨🚨🚨"
-            echo "The 'Post Job' cache saving step for this job WILL FAIL."
-          else
-            echo "✅ The image size is within the cache limit."
-          fi
-          echo "========================================================"
 
       - name: Run Container in Background
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=${{ matrix.arch }} --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} tail -f /dev/null
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=${{ matrix.arch }} \
+            --env BOARD=${{ matrix.board }} \
+            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
       - name: Build
         run: |
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make
+
       - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
-  # ... [请将 build 作业的 steps 完整复制到 unittest 和 systemtest 作业中] ...
+  # =========================================================================
+  # Systemtest 作业 (使用各自的架构镜像)
+  # =========================================================================
+  systemtest:
+    name: systemtest (${{ matrix.arch }} on ${{ matrix.board }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            board: "qemu-gicv3"
+          - arch: riscv64
+            board: "qemu-plic"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        with:
+          key: docker-cache-${{ matrix.arch }}-${{ runner.os }}
+        continue-on-error: true
+
+      - name: Pull Arch Image
+        run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }}"
+          echo "Pulling image: ${IMAGE_NAME}"
+          docker pull ${IMAGE_NAME}
+
+      - name: Run Container in Background with Privileges
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            --cap-add=SYS_ADMIN --privileged \
+            -v ${{ github.workspace }}:/workdir \
+            -w /workdir \
+            --env ARCH=${{ matrix.arch }} \
+            --env BOARD=${{ matrix.board }} \
+            ghcr.io/jaxtonmax/hvisor-ci-${{ matrix.arch }}:${{ env.IMAGE_VERSION }} \
+            tail -f /dev/null
+
+      - name: Run System Test
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make stest
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
 
   # =========================================================================
   # License-checker 作业 (保持不变)
