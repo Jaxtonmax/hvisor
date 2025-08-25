@@ -49,6 +49,29 @@ jobs:
       - name: Pull aarch64 Image (for Linter)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
 
+            # ========================= 新增的诊断步骤 =========================
+      - name: "[DIAGNOSE] Check actual cache package size"
+        run: |
+          echo "================== DIAGNOSTIC REPORT START =================="
+          echo "Step 1: Saving the Docker image to a tarball..."
+          docker save ${{ env.AARCH64_IMAGE }} -o image.tar
+          
+          echo ""
+          echo "Step 2: Checking the exact size of the tarball..."
+          ls -lh image.tar
+          
+          echo ""
+          echo "Step 3: Comparing with `du -sh` for human-readable size..."
+          du -sh image.tar
+
+          echo ""
+          echo "ANALYSIS:"
+          echo "Please check the size reported above. The GitHub Actions cache limit for a single entry is 10 GB."
+          echo "If this size is over 10 GB, we have found the root cause."
+          echo "If this size is well below 10 GB, the root cause is likely the total repository cache quota being full."
+          echo "=================== DIAGNOSTIC REPORT END ==================="
+      # ========================= 诊断步骤结束 =========================
+
       - name: Run Container and Linter Tasks
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
