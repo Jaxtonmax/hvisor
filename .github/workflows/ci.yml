@@ -49,19 +49,20 @@ jobs:
       - name: Pull aarch64 Image (for Linter)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
 
-            # ========================= 新增的诊断步骤 =========================
+            # ========================= 修正后的诊断步骤 =========================
       - name: "[DIAGNOSE] Check actual cache package size"
         run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
           echo "================== DIAGNOSTIC REPORT START =================="
-          echo "Step 1: Saving the Docker image to a tarball..."
-          docker save ${{ env.AARCH64_IMAGE }} -o image.tar
+          echo "Step 1: Saving the Docker image (${IMAGE_NAME}) to a tarball..."
+          docker save ${IMAGE_NAME} -o image.tar
           
           echo ""
           echo "Step 2: Checking the exact size of the tarball..."
           ls -lh image.tar
           
           echo ""
-          echo "Step 3: Comparing with `du -sh` for human-readable size..."
+          echo "Step 3: Comparing with 'du -sh' for human-readable size..."
           du -sh image.tar
 
           echo ""
