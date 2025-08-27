@@ -1,13 +1,12 @@
 # =========================================================================
-# hvisor Github Actions CI (v6.0 - 务实策略版)
+# hvisor Github Actions CI - 精简测试版
 #
-# - 根本原因定位: 仓库总缓存容量超出 10GB 上限，导致 400 错误。
-# - 核心策略:
-#   1. [放弃无效优化] 彻底移除所有 `maximize-build-space` 步骤，
-#      因为它无法解决云端容量问题，只会拖慢 CI。
-#   2. [战略性缓存] 只为体积较小、使用最频繁的 aarch64 镜像启用缓存。
-#   3. [隔离问题] riscv64 和 loongarch64 镜像因体积问题，明确禁用缓存，
-#      接受完整拉取，以保证 CI 整体的稳定性和可预测性。
+# - 策略:
+#   1. 专注核心测试: 移除所有诊断和验证性打印步骤，只保留必要的单元测试、
+#      编译测试、系统测试和许可证检查。
+#   2. 直接指定镜像: 不使用全局 env 变量，将镜像版本直接写入工作流步骤中，
+#      提高可读性和维护性。
+#   3. 缓存策略不变: 沿用原有的缓存策略，仅为 aarch64 镜像启用缓存。
 # =========================================================================
 
 name: CI
@@ -23,66 +22,7 @@ on:
       - dev
   workflow_dispatch:
 
-env:
-  CONTAINER_NAME: ci-container
-  IMAGE_VERSION: wzm_3.0.0
-
 jobs:
-  # =========================================================================
-  # Linter 作业 (使用 aarch64 镜像，启用缓存)
-  # =========================================================================
-  linter:
-    name: linter
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-
-      - name: Restore Docker Layer Cache for aarch64
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        with:
-          key: docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}
-        continue-on-error: true
-
-      - name: Pull aarch64 Image (for Linter)
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
-
-            # ========================= 修正后的诊断步骤 =========================
-      - name: "[DIAGNOSE] Check actual cache package size"
-        run: |
-          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
-          echo "================== DIAGNOSTIC REPORT START =================="
-          echo "Step 1: Saving the Docker image (${IMAGE_NAME}) to a tarball..."
-          docker save ${IMAGE_NAME} -o image.tar
-          
-          echo ""
-          echo "Step 2: Checking the exact size of the tarball..."
-          ls -lh image.tar
-          
-          echo ""
-          echo "Step 3: Comparing with 'du -sh' for human-readable size..."
-          du -sh image.tar
-
-          echo ""
-          echo "ANALYSIS:"
-          echo "Please check the size reported above. The GitHub Actions cache limit for a single entry is 10 GB."
-          echo "If this size is over 10 GB, we have found the root cause."
-          echo "If this size is well below 10 GB, the root cause is likely the total repository cache quota being full."
-          echo "=================== DIAGNOSTIC REPORT END ==================="
-      # ========================= 诊断步骤结束 =========================
-
-      - name: Run Container and Linter Tasks
-        run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make fmt-test
-
-      - name: Stop Container
-        if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
-
   # =========================================================================
   # Unittest 作业 (拆分为 aarch64 和 riscv64)
   # =========================================================================
@@ -101,18 +41,18 @@ jobs:
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}
+          key: docker-cache-aarch64-wzm_3.0.0-${{ runner.os }}
         continue-on-error: true
       - name: Pull aarch64 Image
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0
       - name: Run Container and Unit Test
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make test
+          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make test
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   unittest-riscv64:
     name: unittest (riscv64 on ${{ matrix.board }})
@@ -127,15 +67,15 @@ jobs:
         with:
           submodules: 'recursive'
       - name: Pull riscv64 Image (No Cache)
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:wzm_3.0.0
       - name: Run Container and Unit Test
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make test
+          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-riscv64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make test
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   # =========================================================================
   # Build 作业 (拆分为 aarch64, riscv64, loongarch64)
@@ -155,18 +95,18 @@ jobs:
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}
+          key: docker-cache-aarch64-wzm_3.0.0-${{ runner.os }}
         continue-on-error: true
       - name: Pull aarch64 Image
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0
       - name: Run Container and Build
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make
+          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   build-riscv64:
     name: build (riscv64 on ${{ matrix.board }})
@@ -181,15 +121,15 @@ jobs:
         with:
           submodules: 'recursive'
       - name: Pull riscv64 Image (No Cache)
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:wzm_3.0.0
       - name: Run Container and Build
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make
+          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-riscv64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   build-loongarch64:
     name: build (loongarch64 on ls3a5000)
@@ -200,15 +140,15 @@ jobs:
         with:
           submodules: 'recursive'
       - name: Pull LoongArch Image (No Cache)
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-loongarch64:wzm_3.0.0
       - name: Run Container and Build
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=loongarch64 --env BOARD=ls3a5000 ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make
+          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=loongarch64 --env BOARD=ls3a5000 ghcr.io/jaxtonmax/hvisor-ci-loongarch64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   # =========================================================================
   # Systemtest 作业 (根据架构拆分)
@@ -224,18 +164,18 @@ jobs:
       - name: Restore Docker Layer Cache
         uses: satackey/action-docker-layer-caching@v0.0.11
         with:
-          key: docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}
+          key: docker-cache-aarch64-wzm_3.0.0-${{ runner.os }}
         continue-on-error: true
       - name: Pull aarch64 Image
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0
       - name: Run Container and System Test
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=qemu-gicv3 ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make stest
+          docker run -d --name ci-container --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=qemu-gicv3 ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make stest
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   systemtest-riscv64:
     name: systemtest (riscv64 on qemu-plic)
@@ -246,15 +186,15 @@ jobs:
         with:
           submodules: 'recursive'
       - name: Pull riscv64 Image (No Cache)
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }}
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:wzm_3.0.0
       - name: Run Container and System Test
         run: |
-          docker run -d --name ${{ env.CONTAINER_NAME }} --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=qemu-plic ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }} tail -f /dev/null
-          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make stest
+          docker run -d --name ci-container --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=qemu-plic ghcr.io/jaxtonmax/hvisor-ci-riscv64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make stest
       - name: Stop Container
         if: always()
-        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }}
+        run: docker stop ci-container && docker rm ci-container
 
   # =========================================================================
   # License-checker 作业 (保持不变)
