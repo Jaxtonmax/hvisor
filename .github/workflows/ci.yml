@@ -1,14 +1,15 @@
 # =========================================================================
-# hvisor Github Actions CI - 优化测试版 (含 Linter)
+# hvisor Github Actions CI (v8.0 - 官方工具版)
 #
-# - 策略:
-#   1. 全面测试流程: 包含代码风格检查(Linter)、单元测试、编译测试、
-#      系统测试和许可证检查，确保代码质量和功能正确性。
-#   2. Docker 化环境: 所有测试均在预构建的 Docker 镜像中运行，
-#      保证了环境的一致性并加快了作业的启动速度。
-#   3. 直接指定镜像: 不使用全局 env 变量，将镜像版本直接写入工作流步骤中，
-#      提高可读性和维护性。
-#   4. 缓存策略不变: 沿用原有的缓存策略，仅为 aarch64 镜像启用缓存。
+# - 根本原因已确认: 使用的 `satackey/action-docker-layer-caching` Action
+#   因使用被废弃的 `save-state` 命令而彻底失效，导致缓存保存步骤被静默跳过。
+# - 最终解决方案:
+#   1. [更换工具] 弃用失效的第三方 Action，全面转向 GitHub 官方维护的 `actions/cache`。
+#   2. [明确工作流] 采用更手动但更透明的缓存流程：
+#      a. 尝试恢复缓存的 .tar 文件。
+#      b. 如果恢复成功 (cache hit)，则 `docker load` 载入镜像。
+#      c. 如果恢复失败 (cache miss)，则 `docker pull` 拉取镜像，并 `docker save` 存为 .tar 文件。
+#      d. 在作业结束时，`actions/cache` 会自动将新生成的 .tar 文件上传保存。
 # =========================================================================
 
 name: CI
@@ -24,9 +25,13 @@ on:
       - dev
   workflow_dispatch:
 
+env:
+  CONTAINER_NAME: ci-container
+  IMAGE_VERSION: wzm_3.0.0
+
 jobs:
   # =========================================================================
-  # Linter 作业 (使用 aarch64 镜像，启用缓存)
+  # Linter 作业 (使用官方 actions/cache 进行概念验证)
   # =========================================================================
   linter:
     name: linter
@@ -37,24 +42,47 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Restore Docker Layer Cache
-        uses: satackey/action-docker-layer-caching@v0.0.11
-        with:
-          key: docker-cache-aarch64-wzm_3.0.0-${{ runner.os }}
-        continue-on-error: true
-
-      - name: Pull aarch64 Image
-        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0
-
-      - name: Run Container and Linter Tasks
+      - name: 1. Set up Cache Paths and Keys
+        id: cache-setup
         run: |
-          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0 tail -f /dev/null
-          docker exec ci-container rustup set auto-self-update disable
-          docker exec ci-container make fmt-test
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
+          # 将镜像名中的 ":" 和 "/" 替换为 "-", 以创建有效的文件名和缓存键
+          SANITIZED_IMAGE_NAME=$(echo ${IMAGE_NAME} | sed 's|[:/]|_-_|g')
+          echo "IMAGE_TAR_PATH=image_${SANITIZED_IMAGE_NAME}.tar" >> $GITHUB_ENV
+          echo "CACHE_KEY=docker-cache-${SANITIZED_IMAGE_NAME}-${{ runner.os }}" >> $GITHUB_ENV
 
-      - name: Stop Container
+      - name: 2. Restore Cached Docker Image
+        uses: actions/cache/restore@v4
+        id: cache-restore
+        with:
+          path: ${{ env.IMAGE_TAR_PATH }}
+          key: ${{ env.CACHE_KEY }}
+
+      - name: 3. Load Docker Image from Cache (if hit)
+        if: steps.cache-restore.outputs.cache-hit == 'true'
+        run: |
+          echo "Cache hit! Loading Docker image from ${{ env.IMAGE_TAR_PATH }}..."
+          docker load -i ${{ env.IMAGE_TAR_PATH }}
+          echo "Image loaded successfully."
+
+      - name: 4. Pull and Save Docker Image (if miss)
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: |
+          echo "Cache miss. Pulling image from registry..."
+          docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+          echo "Image pulled. Saving to ${{ env.IMAGE_TAR_PATH }} for caching..."
+          docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
+          echo "Image saved successfully."
+
+      - name: 5. Run Container and Linter Tasks
+        run: |
+          docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
+          docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
+          docker exec ${{ env.CONTAINER_NAME }} make fmt-test
+
+      - name: 6. Stop Container
         if: always()
-        run: docker stop ci-container && docker rm ci-container
+        run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
   # =========================================================================
   # Unittest 作业 (拆分为 aarch64 和 riscv64)
