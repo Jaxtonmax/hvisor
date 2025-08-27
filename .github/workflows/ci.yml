@@ -1,12 +1,14 @@
 # =========================================================================
-# hvisor Github Actions CI - 精简测试版
+# hvisor Github Actions CI - 优化测试版 (含 Linter)
 #
 # - 策略:
-#   1. 专注核心测试: 移除所有诊断和验证性打印步骤，只保留必要的单元测试、
-#      编译测试、系统测试和许可证检查。
-#   2. 直接指定镜像: 不使用全局 env 变量，将镜像版本直接写入工作流步骤中，
+#   1. 全面测试流程: 包含代码风格检查(Linter)、单元测试、编译测试、
+#      系统测试和许可证检查，确保代码质量和功能正确性。
+#   2. Docker 化环境: 所有测试均在预构建的 Docker 镜像中运行，
+#      保证了环境的一致性并加快了作业的启动速度。
+#   3. 直接指定镜像: 不使用全局 env 变量，将镜像版本直接写入工作流步骤中，
 #      提高可读性和维护性。
-#   3. 缓存策略不变: 沿用原有的缓存策略，仅为 aarch64 镜像启用缓存。
+#   4. 缓存策略不变: 沿用原有的缓存策略，仅为 aarch64 镜像启用缓存。
 # =========================================================================
 
 name: CI
@@ -23,6 +25,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  # =========================================================================
+  # Linter 作业 (使用 aarch64 镜像，启用缓存)
+  # =========================================================================
+  linter:
+    name: linter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Restore Docker Layer Cache
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        with:
+          key: docker-cache-aarch64-wzm_3.0.0-${{ runner.os }}
+        continue-on-error: true
+
+      - name: Pull aarch64 Image
+        run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0
+
+      - name: Run Container and Linter Tasks
+        run: |
+          docker run -d --name ci-container -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:wzm_3.0.0 tail -f /dev/null
+          docker exec ci-container rustup set auto-self-update disable
+          docker exec ci-container make fmt-test
+
+      - name: Stop Container
+        if: always()
+        run: docker stop ci-container && docker rm ci-container
+
   # =========================================================================
   # Unittest 作业 (拆分为 aarch64 和 riscv64)
   # =========================================================================
