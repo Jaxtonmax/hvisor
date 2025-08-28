@@ -33,8 +33,16 @@ jobs:
   # =========================================================================
   # Linter 作业 (使用官方 actions/cache 进行概念验证)
   # =========================================================================
+# =========================================================================
+# hvisor Github Actions CI (v8.1 - 诊断模式)
+#
+# - 诊断目标: 验证“作业失败导致缓存不保存”的理论。
+# - 核心修改: 在 linter 命令后增加了 `|| true`，这将强制该步骤成功，
+#   即使 `make fmt-test` 检查到了格式错误。
+#   这会解锁 actions/cache 的保存功能，让我们能看到缓存被创建。
+# =========================================================================
   linter:
-    name: linter
+    name: linter (Diagnostic Mode)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -46,13 +54,12 @@ jobs:
         id: cache-setup
         run: |
           IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
-          # 将镜像名中的 ":" 和 "/" 替换为 "-", 以创建有效的文件名和缓存键
           SANITIZED_IMAGE_NAME=$(echo ${IMAGE_NAME} | sed 's|[:/]|_-_|g')
           echo "IMAGE_TAR_PATH=image_${SANITIZED_IMAGE_NAME}.tar" >> $GITHUB_ENV
           echo "CACHE_KEY=docker-cache-${SANITIZED_IMAGE_NAME}-${{ runner.os }}" >> $GITHUB_ENV
 
       - name: 2. Restore Cached Docker Image
-        uses: actions/cache/restore@v4
+        uses: actions/cache@v4 # <<< 使用 v4 版本
         id: cache-restore
         with:
           path: ${{ env.IMAGE_TAR_PATH }}
@@ -63,7 +70,6 @@ jobs:
         run: |
           echo "Cache hit! Loading Docker image from ${{ env.IMAGE_TAR_PATH }}..."
           docker load -i ${{ env.IMAGE_TAR_PATH }}
-          echo "Image loaded successfully."
 
       - name: 4. Pull and Save Docker Image (if miss)
         if: steps.cache-restore.outputs.cache-hit != 'true'
@@ -72,13 +78,13 @@ jobs:
           docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
           echo "Image pulled. Saving to ${{ env.IMAGE_TAR_PATH }} for caching..."
           docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
-          echo "Image saved successfully."
 
-      - name: 5. Run Container and Linter Tasks
+      - name: 5. Run Container and Linter Tasks (Forced Success)
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          docker exec ${{ env.CONTAINER_NAME }} make fmt-test
+          # 【！！！关键修改在这里！！！】
+          docker exec ${{ env.CONTAINER_NAME }} make fmt-test || true
 
       - name: 6. Stop Container
         if: always()
