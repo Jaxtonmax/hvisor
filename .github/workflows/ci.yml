@@ -1,13 +1,13 @@
 # =========================================================================
-# hvisor Github Actions CI (v10.0 - RISC-V 缓存策略版)
+# hvisor Github Actions CI (v10.1 - 精确缓存匹配版)
 #
-# - 缓存策略变更:
-#   1. [禁用 aarch64 缓存] 所有 aarch64 相关作业 (linter, build, unittest,
-#      systemtest) 已移除缓存逻辑，回归到标准的 `docker pull`。
-#   2. [启用 riscv64 缓存] 为所有使用 riscv64 镜像的作业 (build, unittest,
-#      systemtest) 启用并共享同一个缓存。
-# - 体积警告: riscv64 镜像体积为 6.54GB，将占用大部分仓库缓存配额 (10GB)。
-# - 前提: 运行前，必须使用 `gh actions-cache delete --all` 清理旧的 aarch64 缓存。
+# - 根本原因已确认: actions/cache 的前缀匹配机制找到了一个旧的、损坏的
+#   "幽灵缓存"，导致了虚假的 cache hit 和后续的 docker load 失败。
+# - 最终解决方案:
+#   1. [增加精确匹配] 在所有 actions/cache 步骤中，增加了 `restore-keys: |`。
+#      这会禁用所有模糊匹配和前缀匹配，强制 action 只接受 100% 精确的 key 匹配。
+#   2. [再次清理] 运行前，必须再次使用 `gh actions-cache delete --all` 清理所有
+#      可能存在的“幽灵缓存”。
 # =========================================================================
 
 name: CI
@@ -28,32 +28,25 @@ env:
   IMAGE_VERSION: wzm_3.0.0
 
 jobs:
-  # =========================================================================
-  # Linter 作业 (使用 aarch64, 无缓存)
-  # =========================================================================
+  # Linter 作业 (无缓存)
   linter:
     name: linter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { submodules: 'recursive' }
-
       - name: Pull aarch64 Image (No Cache)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
-
       - name: Run Linter Tasks
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make fmt-test
-
       - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # =========================================================================
   # Unittest 作业
-  # =========================================================================
   unittest-aarch64:
     name: unittest (aarch64 on ${{ matrix.board }})
     runs-on: ubuntu-latest
@@ -87,7 +80,11 @@ jobs:
       - name: Restore Cached riscv64 Image
         uses: actions/cache@v4
         id: cache-restore-riscv64
-        with: { path: '${{ env.IMAGE_TAR_PATH }}', key: '${{ env.CACHE_KEY }}' }
+        with:
+          path: ${{ env.IMAGE_TAR_PATH }}
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: | # <<< 关键修复：禁用模糊匹配
+
       - name: Load/Pull riscv64 Image
         run: |
           if [[ "${{ steps.cache-restore-riscv64.outputs.cache-hit }}" == "true" ]]; then
@@ -106,10 +103,9 @@ jobs:
       - if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # =========================================================================
   # Build 作业
-  # =========================================================================
   build-aarch64:
+    # ... (保持不变, 无缓存)
     name: build (aarch64 on ${{ matrix.board }})
     runs-on: ubuntu-latest
     strategy: { fail-fast: false, matrix: { board: ["qemu-gicv3", "qemu-gicv2", "zcu102", "imx8mp", "rk3568", "rk3588", "ok6254-c"] } }
@@ -142,7 +138,10 @@ jobs:
       - name: Restore Cached riscv64 Image
         uses: actions/cache@v4
         id: cache-restore-riscv64
-        with: { path: '${{ env.IMAGE_TAR_PATH }}', key: '${{ env.CACHE_KEY }}' }
+        with:
+          path: ${{ env.IMAGE_TAR_PATH }}
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: | # <<< 关键修复：禁用模糊匹配
       - name: Load/Pull riscv64 Image
         run: |
           if [[ "${{ steps.cache-restore-riscv64.outputs.cache-hit }}" == "true" ]]; then
@@ -162,6 +161,7 @@ jobs:
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
   build-loongarch64:
+    # ... (保持不变, 无缓存)
     name: build (loongarch64 on ls3a5000)
     runs-on: ubuntu-latest
     steps:
@@ -177,10 +177,9 @@ jobs:
       - if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # =========================================================================
   # Systemtest 作业
-  # =========================================================================
   systemtest-aarch64:
+    # ... (保持不变, 无缓存)
     name: systemtest (aarch64 on qemu-gicv3)
     runs-on: ubuntu-22.04
     steps:
@@ -211,7 +210,10 @@ jobs:
       - name: Restore Cached riscv64 Image
         uses: actions/cache@v4
         id: cache-restore-riscv64
-        with: { path: '${{ env.IMAGE_TAR_PATH }}', key: '${{ env.CACHE_KEY }}' }
+        with:
+          path: ${{ env.IMAGE_TAR_PATH }}
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: | # <<< 关键修复：禁用模糊匹配
       - name: Load/Pull riscv64 Image
         run: |
           if [[ "${{ steps.cache-restore-riscv64.outputs.cache-hit }}" == "true" ]]; then
@@ -230,10 +232,9 @@ jobs:
       - if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # =========================================================================
   # License-checker 作业 (保持不变)
-  # =========================================================================
   license-checker:
+    # ... (保持不变)
     name: license-checker
     runs-on: ubuntu-latest
     steps:
