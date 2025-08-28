@@ -1,15 +1,11 @@
 # =========================================================================
-# hvisor Github Actions CI (v8.0 - 官方工具版)
+# hvisor Github Actions CI (v9.0 - 生产就绪版)
 #
-# - 根本原因已确认: 使用的 `satackey/action-docker-layer-caching` Action
-#   因使用被废弃的 `save-state` 命令而彻底失效，导致缓存保存步骤被静默跳过。
-# - 最终解决方案:
-#   1. [更换工具] 弃用失效的第三方 Action，全面转向 GitHub 官方维护的 `actions/cache`。
-#   2. [明确工作流] 采用更手动但更透明的缓存流程：
-#      a. 尝试恢复缓存的 .tar 文件。
-#      b. 如果恢复成功 (cache hit)，则 `docker load` 载入镜像。
-#      c. 如果恢复失败 (cache miss)，则 `docker pull` 拉取镜像，并 `docker save` 存为 .tar 文件。
-#      d. 在作业结束时，`actions/cache` 会自动将新生成的 .tar 文件上传保存。
+# - 缓存策略:
+#   1. [全面应用] 为所有使用 aarch64 镜像的作业 (linter, build, unittest, systemtest)
+#      启用并共享同一个缓存，使用统一的 cache key。
+#   2. [保持禁用] riscv64 和 loongarch64 作业保持无缓存策略，以避免超出总配额。
+# - 前提: 必须先修复代码格式问题，确保 linter 作业能成功通过，以便首次创建缓存。
 # =========================================================================
 
 name: CI
@@ -31,66 +27,54 @@ env:
 
 jobs:
   # =========================================================================
-  # Linter 作业 (使用官方 actions/cache 进行概念验证)
+  # Linter 作业 (aarch64, 启用缓存)
   # =========================================================================
-# =========================================================================
-# hvisor Github Actions CI (v8.1 - 诊断模式)
-#
-# - 诊断目标: 验证“作业失败导致缓存不保存”的理论。
-# - 核心修改: 在 linter 命令后增加了 `|| true`，这将强制该步骤成功，
-#   即使 `make fmt-test` 检查到了格式错误。
-#   这会解锁 actions/cache 的保存功能，让我们能看到缓存被创建。
-# =========================================================================
   linter:
-    name: linter (Diagnostic Mode)
+    name: linter
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
+      - uses: actions/checkout@v4
+        with: { submodules: 'recursive' }
 
-      - name: 1. Set up Cache Paths and Keys
-        id: cache-setup
+      - name: Set up Cache Paths and Keys for aarch64
+        id: cache-setup-aarch64
         run: |
           IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
           SANITIZED_IMAGE_NAME=$(echo ${IMAGE_NAME} | sed 's|[:/]|_-_|g')
           echo "IMAGE_TAR_PATH=image_${SANITIZED_IMAGE_NAME}.tar" >> $GITHUB_ENV
           echo "CACHE_KEY=docker-cache-${SANITIZED_IMAGE_NAME}-${{ runner.os }}" >> $GITHUB_ENV
 
-      - name: 2. Restore Cached Docker Image
-        uses: actions/cache@v4 # <<< 使用 v4 版本
-        id: cache-restore
+      - name: Restore Cached aarch64 Image
+        uses: actions/cache@v4
+        id: cache-restore-aarch64
         with:
           path: ${{ env.IMAGE_TAR_PATH }}
           key: ${{ env.CACHE_KEY }}
 
-      - name: 3. Load Docker Image from Cache (if hit)
-        if: steps.cache-restore.outputs.cache-hit == 'true'
+      - name: Load/Pull aarch64 Image
         run: |
-          echo "Cache hit! Loading Docker image from ${{ env.IMAGE_TAR_PATH }}..."
-          docker load -i ${{ env.IMAGE_TAR_PATH }}
+          if [[ "${{ steps.cache-restore-aarch64.outputs.cache-hit }}" == "true" ]]; then
+            echo "Cache hit! Loading Docker image..."
+            docker load -i ${{ env.IMAGE_TAR_PATH }}
+          else
+            echo "Cache miss. Pulling and saving Docker image..."
+            docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+            docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
+          fi
 
-      - name: 4. Pull and Save Docker Image (if miss)
-        if: steps.cache-restore.outputs.cache-hit != 'true'
-        run: |
-          echo "Cache miss. Pulling image from registry..."
-          docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
-          echo "Image pulled. Saving to ${{ env.IMAGE_TAR_PATH }} for caching..."
-          docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
-
-      - name: 5. Run Container and Linter Tasks (Forced Success)
+      - name: Run Linter Tasks
         run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
-          # 【！！！关键修改在这里！！！】
-          docker exec ${{ env.CONTAINER_NAME }} make fmt-test || true
+          docker exec ${{ env.CONTAINER_NAME }} make fmt-test
 
-      - name: 6. Stop Container
+      - name: Stop Container
         if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # Unittest 作业 (拆分为 aarch64 [缓存] 和 riscv64 [无缓存])
+  # =========================================================================
+  # Unittest 作业
+  # =========================================================================
   unittest-aarch64:
     name: unittest (aarch64 on ${{ matrix.board }})
     runs-on: ubuntu-latest
@@ -98,11 +82,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { submodules: 'recursive' }
-      - uses: satackey/action-docker-layer-caching@v0.0.11
-        with: { key: 'docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}' }
-        continue-on-error: true
-      - run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Set up Cache Paths and Keys for aarch64
+        run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
+          SANITIZED_IMAGE_NAME=$(echo ${IMAGE_NAME} | sed 's|[:/]|_-_|g')
+          echo "IMAGE_TAR_PATH=image_${SANITIZED_IMAGE_NAME}.tar" >> $GITHUB_ENV
+          echo "CACHE_KEY=docker-cache-${SANITIZED_IMAGE_NAME}-${{ runner.os }}" >> $GITHUB_ENV
+      - name: Restore Cached aarch64 Image
+        uses: actions/cache@v4
+        id: cache-restore-aarch64
+        with: { path: '${{ env.IMAGE_TAR_PATH }}', key: '${{ env.CACHE_KEY }}' }
+      - name: Load/Pull aarch64 Image
+        run: |
+          if [[ "${{ steps.cache-restore-aarch64.outputs.cache-hit }}" == "true" ]]; then
+            docker load -i ${{ env.IMAGE_TAR_PATH }}
+          else
+            docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+            docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
+          fi
+      - name: Run Unit Test
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make test
@@ -118,14 +117,17 @@ jobs:
         with: { submodules: 'recursive' }
       - name: Pull riscv64 Image (No Cache)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Run Unit Test
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make test
       - if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # Build 作业 (拆分为 aarch64 [缓存], riscv64 [无缓存], loongarch64 [无缓存])
+  # =========================================================================
+  # Build 作业
+  # =========================================================================
   build-aarch64:
     name: build (aarch64 on ${{ matrix.board }})
     runs-on: ubuntu-latest
@@ -133,11 +135,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { submodules: 'recursive' }
-      - uses: satackey/action-docker-layer-caching@v0.0.11
-        with: { key: 'docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}' }
-        continue-on-error: true
-      - run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Set up Cache Paths and Keys for aarch64
+        run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
+          SANITIZED_IMAGE_NAME=$(echo ${IMAGE_NAME} | sed 's|[:/]|_-_|g')
+          echo "IMAGE_TAR_PATH=image_${SANITIZED_IMAGE_NAME}.tar" >> $GITHUB_ENV
+          echo "CACHE_KEY=docker-cache-${SANITIZED_IMAGE_NAME}-${{ runner.os }}" >> $GITHUB_ENV
+      - name: Restore Cached aarch64 Image
+        uses: actions/cache@v4
+        id: cache-restore-aarch64
+        with: { path: '${{ env.IMAGE_TAR_PATH }}', key: '${{ env.CACHE_KEY }}' }
+      - name: Load/Pull aarch64 Image
+        run: |
+          if [[ "${{ steps.cache-restore-aarch64.outputs.cache-hit }}" == "true" ]]; then
+            docker load -i ${{ env.IMAGE_TAR_PATH }}
+          else
+            docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+            docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
+          fi
+      - name: Build
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make
@@ -153,7 +170,8 @@ jobs:
         with: { submodules: 'recursive' }
       - name: Pull riscv64 Image (No Cache)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Build
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=${{ matrix.board }} ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make
@@ -168,25 +186,43 @@ jobs:
         with: { submodules: 'recursive' }
       - name: Pull LoongArch Image (No Cache)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Build
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=loongarch64 --env BOARD=ls3a5000 ghcr.io/jaxtonmax/hvisor-ci-loongarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make
       - if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
-  # Systemtest 作业 (拆分为 aarch64 [缓存] 和 riscv64 [无缓存])
+  # =========================================================================
+  # Systemtest 作业
+  # =========================================================================
   systemtest-aarch64:
     name: systemtest (aarch64 on qemu-gicv3)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with: { submodules: 'recursive' }
-      - uses: satackey/action-docker-layer-caching@v0.0.11
-        with: { key: 'docker-cache-aarch64-${{ env.IMAGE_VERSION }}-${{ runner.os }}' }
-        continue-on-error: true
-      - run: docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Set up Cache Paths and Keys for aarch64
+        run: |
+          IMAGE_NAME="ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}"
+          SANITIZED_IMAGE_NAME=$(echo ${IMAGE_NAME} | sed 's|[:/]|_-_|g')
+          echo "IMAGE_TAR_PATH=image_${SANITIZED_IMAGE_NAME}.tar" >> $GITHUB_ENV
+          echo "CACHE_KEY=docker-cache-${SANITIZED_IMAGE_NAME}-${{ runner.os }}" >> $GITHUB_ENV
+      - name: Restore Cached aarch64 Image
+        uses: actions/cache@v4
+        id: cache-restore-aarch64
+        with: { path: '${{ env.IMAGE_TAR_PATH }}', key: '${{ env.CACHE_KEY }}' }
+      - name: Load/Pull aarch64 Image
+        run: |
+          if [[ "${{ steps.cache-restore-aarch64.outputs.cache-hit }}" == "true" ]]; then
+            docker load -i ${{ env.IMAGE_TAR_PATH }}
+          else
+            docker pull ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }}
+            docker save ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} -o ${{ env.IMAGE_TAR_PATH }}
+          fi
+      - name: Run System Test
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=aarch64 --env BOARD=qemu-gicv3 ghcr.io/jaxtonmax/hvisor-ci-aarch64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make stest
@@ -201,14 +237,17 @@ jobs:
         with: { submodules: 'recursive' }
       - name: Pull riscv64 Image (No Cache)
         run: docker pull ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }}
-      - run: |
+      - name: Run System Test
+        run: |
           docker run -d --name ${{ env.CONTAINER_NAME }} --cap-add=SYS_ADMIN --privileged -v ${{ github.workspace }}:/workdir -w /workdir --env ARCH=riscv64 --env BOARD=qemu-plic ghcr.io/jaxtonmax/hvisor-ci-riscv64:${{ env.IMAGE_VERSION }} tail -f /dev/null
           docker exec ${{ env.CONTAINER_NAME }} rustup set auto-self-update disable
           docker exec ${{ env.CONTAINER_NAME }} make stest
       - if: always()
         run: docker stop ${{ env.CONTAINER_NAME }} && docker rm ${{ env.CONTAINER_NAME }} || true
 
+  # =========================================================================
   # License-checker 作业 (保持不变)
+  # =========================================================================
   license-checker:
     name: license-checker
     runs-on: ubuntu-latest
